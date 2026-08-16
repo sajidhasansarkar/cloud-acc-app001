@@ -79,6 +79,49 @@ export const createFiscalYearSchema = z
 
 export type CreateFiscalYearInput = z.infer<typeof createFiscalYearSchema>;
 
+// ------------------------------
+// Chart of Accounts (Phase 3A-1)
+// ------------------------------
+
+export const accountTypeSchema = z.enum([
+  "ASSET",
+  "LIABILITY",
+  "EQUITY",
+  "REVENUE",
+  "EXPENSE",
+]);
+
+// Optional trimmed string that treats "" as absent (parentAccountId,
+// subtype, description all use this — "no value" and "empty string" from
+// a form should mean the same thing).
+const optionalId = z
+  .string()
+  .trim()
+  .optional()
+  .or(z.literal(""))
+  .transform((v) => (v ? v : undefined));
+
+const accountBaseSchema = {
+  companyId: z.string().trim().min(1, "companyId is required"),
+  code: z.string().trim().min(1, "Account code is required").max(20),
+  name: z.string().trim().min(1, "Account name is required").max(120),
+  description: optionalTrimmed(500),
+  type: accountTypeSchema,
+  // Deliberately a free-form string, not an enum — see the Account.subtype
+  // comment in prisma/schema.prisma. src/accounting/account-subtypes.ts
+  // has suggested values per type for a future dropdown.
+  subtype: optionalTrimmed(60),
+  parentAccountId: optionalId,
+};
+
+export const createAccountSchema = z.object(accountBaseSchema);
+export type CreateAccountInput = z.infer<typeof createAccountSchema>;
+
+export const updateAccountSchema = z.object(accountBaseSchema);
+export type UpdateAccountInput = z.infer<typeof updateAccountSchema>;
+
+export type AccountFieldErrors = Partial<Record<keyof CreateAccountInput, string>>;
+
 export const periodFrequencySchema = z.enum(["MONTHLY", "QUARTERLY"]);
 export type PeriodFrequencyInput = z.infer<typeof periodFrequencySchema>;
 

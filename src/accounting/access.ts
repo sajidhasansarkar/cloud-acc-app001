@@ -55,3 +55,20 @@ export async function getOwnedAccountingPeriod(
     },
   });
 }
+
+// A chart-of-accounts account scoped to a specific company, which itself
+// must belong to the caller's organization. Same rule as everywhere else
+// in this file: a bare accountId is never trusted on its own.
+export async function getOwnedAccount(
+  organizationId: string,
+  companyId: string,
+  accountId: string
+) {
+  return prisma.account.findFirst({
+    where: {
+      id: accountId,
+      companyId,
+      company: { organizationId },
+    },
+  });
+}

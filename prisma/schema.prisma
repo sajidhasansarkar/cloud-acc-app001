@@ -1,8 +1,10 @@
-// Accounting Platform — Phase 1 + Phase 2A + Phase 2B-1 schema
+// Accounting Platform — Phase 1 + Phase 2A + Phase 2B-1 + Phase 3A-1 schema
 // Phase 1: auth, organizations, memberships, companies (foundation).
 // Phase 2A: full company management + reusable country configuration.
 // Phase 2B-1: fiscal year / accounting period foundation (backend only —
 // no UI yet, that's Phase 2B-2).
+// Phase 3A-1: chart of accounts database foundation (backend only — no UI
+// yet). See the Account model below.
 // Do not add journal entries/transactions/ledger/tax/AI models here yet —
 // those belong to later phases.
 
@@ -66,6 +68,19 @@ enum PeriodStatus {
 enum PeriodFrequency {
   MONTHLY
   QUARTERLY
+}
+
+// Chart of Accounts (Phase 3A-1). The five classic accounting classes.
+// Deliberately just these five, fixed — this is standard accounting theory
+// (every account rolls up into exactly one of these), not a business rule
+// that changes over time, so an enum is the right (and DB-checked) tool
+// here, unlike AccountSubtype below.
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
 }
 
 // ------------------------------
@@ -170,10 +185,76 @@ model Company {
 
   fiscalYears       FiscalYear[]
   accountingPeriods AccountingPeriod[]
+  accounts          Account[]
 
   @@index([organizationId])
   @@index([countryConfigurationId])
   @@map("companies")
+}
+
+// ------------------------------
+// Chart of Accounts (Phase 3A-1 — database foundation only, no UI yet)
+// ------------------------------
+
+// A single ledger account belonging to a Company (e.g. "1000 Assets",
+// "1210 Bank Account A"). This phase only establishes the model, its
+// hierarchy, and its constraints — no journal entries, balances, or
+// automatic accounting logic post to it yet.
+model Account {
+  id          String  @id @default(cuid())
+  companyId   String
+  code        String
+  name        String
+  description String?
+
+  // Fixed top-level classification — see the AccountType enum comment.
+  type AccountType
+
+  // Finer classification within a type (e.g. "Bank", "Accounts Receivable"
+  // under ASSET). Intentionally a plain string rather than an enum: the
+  // spec explicitly asks for this not to be "unnecessarily rigid", and the
+  // useful subtypes differ by company/industry/country in ways a fixed
+  // enum can't accommodate without a migration every time. A curated list
+  // of suggested subtypes per AccountType lives in
+  // src/accounting/account-subtypes.ts for UI dropdowns to use — that list
+  // is guidance, not a DB constraint.
+  subtype String?
+
+  // Self-referencing hierarchy: an account may have zero or one parent and
+  // any number of children. Application code (src/accounting/accounts.ts)
+  // is responsible for rejecting an account being its own parent and for
+  // requiring the parent to belong to the same company — both are checks
+  // that can't be expressed as a plain foreign key.
+  parentAccountId String?
+  parentAccount   Account?  @relation("AccountHierarchy", fields: [parentAccountId], references: [id])
+  childAccounts   Account[] @relation("AccountHierarchy")
+
+  // Inactive accounts are hidden from normal selection lists but are never
+  // deleted (accounting history must stay intact even once an account is
+  // retired). No separate AccountStatus enum — a boolean is all this needs
+  // and matches how the rest of this phase is scoped (no posting/balance
+  // state to track yet).
+  isActive Boolean @default(true)
+
+  // Marks accounts the system itself relies on (e.g. Retained Earnings,
+  // Opening Balance Equity, Accounts Receivable, Accounts Payable, Current
+  // Year Earnings) so later phases can protect them from being renamed,
+  // retyped, or deleted. No automatic accounting logic reads/writes this
+  // flag yet in this phase — it's just persisted.
+  isSystemAccount Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Account code must be unique within a company, but the same code (e.g.
+  // "1000") is allowed to repeat across different companies.
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@index([companyId, type])
+  @@index([parentAccountId])
+  @@map("accounts")
 }
 
 // ------------------------------

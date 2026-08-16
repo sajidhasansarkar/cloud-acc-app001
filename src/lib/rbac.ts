@@ -37,6 +37,12 @@ export function canManageFiscalYears(role: Role) {
   return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT";
 }
 
+// Chart of Accounts (Phase 3A-1). Same coarse capability set as company
+// management / fiscal years for now — REVIEWER stays read-only.
+export function canManageAccounts(role: Role) {
+  return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT";
+}
+
 export function canManageMembers(role: Role) {
   return role === "ADMIN";
 }
