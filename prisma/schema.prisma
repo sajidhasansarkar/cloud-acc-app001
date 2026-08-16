@@ -1,0 +1,271 @@
+// Accounting Platform — Phase 1 + Phase 2A + Phase 2B-1 schema
+// Phase 1: auth, organizations, memberships, companies (foundation).
+// Phase 2A: full company management + reusable country configuration.
+// Phase 2B-1: fiscal year / accounting period foundation (backend only —
+// no UI yet, that's Phase 2B-2).
+// Do not add journal entries/transactions/ledger/tax/AI models here yet —
+// those belong to later phases.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ------------------------------
+// Enums
+// ------------------------------
+
+enum GlobalRole {
+  ADMIN
+  ACCOUNTANT
+  REVIEWER
+  MANAGER
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  REMOVED
+}
+
+// ONBOARDING is retained for backward compatibility with any Phase 1 records
+// created before Phase 2A. New companies are created directly as ACTIVE or
+// ARCHIVED per the Phase 2A spec; the Create/Edit forms only expose those two.
+enum CompanyStatus {
+  ACTIVE
+  ONBOARDING
+  ARCHIVED
+}
+
+// Shared by FiscalYear and AccountingPeriod. Journal entries don't exist yet
+// (later phase), so LOCKED/CLOSED don't block anything today — the enum and
+// the status-change functions are prepared now so that phase can just start
+// checking them without a schema change.
+enum PeriodStatus {
+  OPEN
+  CLOSED
+  LOCKED
+}
+
+// Mirrors the existing `periodFrequencySchema` (src/lib/validations.ts) and
+// the `PeriodFrequency` type already used by the period-generation workflow
+// (src/accounting/accounting-periods.ts). Reusing the same two values here
+// — rather than a free-form string — means Company.defaultPeriodFrequency
+// can never drift out of sync with what the generator actually accepts.
+enum PeriodFrequency {
+  MONTHLY
+  QUARTERLY
+}
+
+// ------------------------------
+// Auth / Identity
+// ------------------------------
+
+// A person who can sign in to the internal platform (staff/accountants only —
+// clients never get a User record in this system).
+model User {
+  id           String     @id @default(cuid())
+  name         String
+  email        String     @unique
+  passwordHash String
+  role         GlobalRole @default(ACCOUNTANT)
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  memberships Membership[]
+
+  @@map("users")
+}
+
+// A tenant. All Companies and data must be scoped to an Organization so that
+// two organizations can never see each other's data.
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships Membership[]
+  companies   Company[]
+
+  @@map("organizations")
+}
+
+// Join table: which users belong to which organization, and with what role
+// *within that organization*. Keeping this separate from User.role allows a
+// user's permissions to differ per organization later (e.g. an external
+// reviewer who is ADMIN in one org and REVIEWER in another).
+model Membership {
+  id             String           @id @default(cuid())
+  userId         String
+  organizationId String
+  role           GlobalRole       @default(ACCOUNTANT)
+  status         MembershipStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("memberships")
+}
+
+// ------------------------------
+// Companies (client entities managed inside an Organization)
+// ------------------------------
+
+// A "Company" is a client business being bookkept by the organization.
+// Clients never log in — this is purely for internal staff to manage.
+model Company {
+  id             String        @id @default(cuid())
+  organizationId String
+
+  // Business information
+  legalName       String
+  displayName     String
+  businessNumber  String?
+  address         String?
+  city            String?
+  stateProvince   String?
+  postalCode      String?
+  country         String // ISO 3166-1 alpha-2, e.g. "CA", "US", "GB", "AU" — kept as a
+  // plain code (in addition to the FK below) so filters/sorts/display never
+  // require a join, and so the record stays meaningful even if the referenced
+  // CountryConfiguration is later deactivated or removed.
+  countryConfigurationId String?
+  contactEmail           String?
+  contactPhone           String?
+
+  // Accounting basics
+  currency String // ISO 4217, e.g. "CAD", "USD", "GBP", "AUD"
+  status   CompanyStatus @default(ACTIVE)
+
+  // Company Settings → Accounting (Phase 2B-2B-2). Purely a default that
+  // pre-fills the frequency selector in the existing "Generate Periods"
+  // dialog (src/components/fiscal-years/generate-periods-dialog.tsx) — it
+  // does not itself generate anything and does not change how
+  // generateAndCreateAccountingPeriods works. A user can still pick the
+  // other frequency at generation time.
+  defaultPeriodFrequency PeriodFrequency @default(MONTHLY)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  countryConfiguration CountryConfiguration? @relation(fields: [countryConfigurationId], references: [id])
+
+  fiscalYears       FiscalYear[]
+  accountingPeriods AccountingPeriod[]
+
+  @@index([organizationId])
+  @@index([countryConfigurationId])
+  @@map("companies")
+}
+
+// ------------------------------
+// Fiscal Years / Accounting Periods (Phase 2B-1 — backend foundation only)
+// ------------------------------
+
+// A company's fiscal year (e.g. "FY2026", Apr 1 2026 → Mar 31 2027). A
+// company can have many fiscal years over time, but a given company's
+// fiscal years must never overlap in date range — enforced at the
+// application level in src/accounting/fiscal-years.ts (see comments there).
+model FiscalYear {
+  id        String       @id @default(cuid())
+  companyId String
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  status    PeriodStatus @default(OPEN)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  company           Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  accountingPeriods AccountingPeriod[]
+
+  // A company shouldn't have two fiscal years with the same name (e.g. two
+  // "FY2026"s). Overlap-by-date-range is a separate, non-unique-constraint
+  // check performed in application code before create.
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@index([companyId, startDate, endDate])
+  @@map("fiscal_years")
+}
+
+// A subdivision of a FiscalYear (a month or a quarter, depending on how it
+// was generated). companyId is denormalized from the parent FiscalYear
+// (rather than derived via a join every time) so every query/index here can
+// be scoped directly to a company — the same pattern Company already uses
+// for organizationId. It is always set from the fiscal year's own
+// companyId server-side, never taken from client input, so the two can
+// never disagree.
+model AccountingPeriod {
+  id           String       @id @default(cuid())
+  companyId    String
+  fiscalYearId String
+  name         String
+  periodNumber Int
+  startDate    DateTime
+  endDate      DateTime
+  status       PeriodStatus @default(OPEN)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fiscalYear FiscalYear @relation(fields: [fiscalYearId], references: [id], onDelete: Cascade)
+
+  // Period numbers must be unique within a fiscal year (e.g. only one
+  // "Period 1" per fiscal year).
+  @@unique([fiscalYearId, periodNumber])
+  @@index([companyId])
+  @@index([fiscalYearId])
+  @@index([companyId, startDate, endDate])
+  @@map("accounting_periods")
+}
+
+// ------------------------------
+// Supporting reference data (extendable, not hard-coded business logic)
+// ------------------------------
+
+// Reusable country configuration. Lets an ADMIN add supported countries later
+// without a code change, and gives future phases (tax engine, fiscal periods,
+// reporting) a single place to hang country-specific rules — none of which
+// are implemented yet. Only the identity/currency fields are functional in
+// Phase 2A; taxSystem / taxAuthority / accountingStandard / dateFormat are
+// nullable placeholders for later phases.
+model CountryConfiguration {
+  id          String @id @default(cuid())
+  countryName String
+  countryCode String @unique // ISO 3166-1 alpha-2, e.g. "CA", "US", "GB", "AU"
+
+  currencyCode   String // ISO 4217, e.g. "CAD"
+  currencySymbol String // e.g. "$"
+
+  // Future-use fields — intentionally nullable, not implemented in Phase 2A.
+  dateFormat         String?
+  taxSystem          String?
+  taxAuthority       String?
+  accountingStandard String?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companies Company[]
+
+  @@map("country_configurations")
+}

@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-surface-muted text-ink-900;
+  }
+  ::selection {
+    @apply bg-ledger-200/60;
+  }
+}
+
+@layer utilities {
+  /* Tabular figures for financial data — a small but deliberate detail that
+     makes numbers align like a real ledger. */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
