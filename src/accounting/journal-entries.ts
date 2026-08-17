@@ -7,6 +7,7 @@ import {
   getOwnedAccountingPeriod,
   getOwnedAccount,
   getOwnedJournalEntry,
+  getOwnedJournalEntryById,
 } from "./access";
 
 /**
@@ -164,9 +165,19 @@ export async function validateJournalEntryBalance(journalEntryId: string): Promi
  * make saving an incomplete draft impossible. Whether an entry's lines are
  * complete/balanced enough to POST is a separate concern for Phase 4A-3B.
  */
-function validateLineAmounts(line: JournalEntryLineInput): { ok: true } | { ok: false; error: string } {
-  const debit = new Prisma.Decimal(line.debit);
-  const credit = new Prisma.Decimal(line.credit);
+function validateLineAmounts(
+  line: JournalEntryLineInput,
+  options: { allowIncompleteDraftLine?: boolean } = {}
+): { ok: true; complete: boolean } | { ok: false; error: string } {
+  let debit: Prisma.Decimal;
+  let credit: Prisma.Decimal;
+
+  try {
+    debit = new Prisma.Decimal(line.debit);
+    credit = new Prisma.Decimal(line.credit);
+  } catch {
+    return { ok: false, error: "Enter valid debit and credit amounts." };
+  }
 
   if (debit.isNegative() || credit.isNegative()) {
     return { ok: false, error: "Amount cannot be negative." };
@@ -174,35 +185,107 @@ function validateLineAmounts(line: JournalEntryLineInput): { ok: true } | { ok: 
   if (!debit.isZero() && !credit.isZero()) {
     return { ok: false, error: "Debit and Credit cannot both contain values." };
   }
-  return { ok: true };
+
+  const complete = debit.gt(0) || credit.gt(0);
+  if (!complete && !options.allowIncompleteDraftLine) {
+    return { ok: false, error: "Debit or Credit amount is required." };
+  }
+
+  return { ok: true, complete };
 }
 
 /**
- * Shared line-side verification for create and update: every referenced
- * account must exist and belong to `companyId` (spec section 5), and every
- * line's amounts must pass validateLineAmounts above. Deduplicates account
- * ids so entries with many lines against the same account only do one
- * ownership lookup per account.
+ * Shared server-side line verification. Ownership is always resolved from
+ * the authenticated organization + company; client ids are never treated
+ * as proof of ownership. Incomplete zero/zero lines are permitted only for
+ * draft saves, while posting validation requires every line to be complete.
  */
 async function verifyLines(
   organizationId: string,
   companyId: string,
-  lines: JournalEntryLineInput[]
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const uniqueAccountIds = [...new Set(lines.map((l) => l.accountId))];
+  lines: JournalEntryLineInput[],
+  options: { allowIncompleteDraftLines: boolean; requireActiveAccounts?: boolean }
+): Promise<{ ok: true; validLineCount: number } | { ok: false; error: string }> {
+  const uniqueAccountIds = [...new Set(lines.map((line) => line.accountId.trim()).filter(Boolean))];
+
+  if (uniqueAccountIds.length !== lines.length) {
+    return { ok: false, error: "Account is required." };
+  }
+
   for (const accountId of uniqueAccountIds) {
     const account = await getOwnedAccount(organizationId, companyId, accountId);
     if (!account) {
       return { ok: false, error: "One or more lines reference an account outside this company." };
     }
-  }
-  for (const line of lines) {
-    const lineCheck = validateLineAmounts(line);
-    if (!lineCheck.ok) {
-      return lineCheck;
+    if (options.requireActiveAccounts && !account.isActive) {
+      return { ok: false, error: "One or more journal lines reference an inactive account." };
     }
   }
-  return { ok: true };
+
+  let validLineCount = 0;
+  for (const line of lines) {
+    const lineCheck = validateLineAmounts(line, {
+      allowIncompleteDraftLine: options.allowIncompleteDraftLines,
+    });
+    if (!lineCheck.ok) return lineCheck;
+    if (lineCheck.complete) validLineCount += 1;
+  }
+
+  return { ok: true, validLineCount };
+}
+
+/**
+ * Validates all invariants required before a future POST action. This
+ * function deliberately performs no status mutation and can be reused by
+ * the future posting workflow without duplicating accounting rules.
+ */
+export async function validateJournalEntryForPosting(
+  organizationId: string,
+  journalEntryId: string
+): Promise<{ ok: true; balanced: true; totalDebit: Prisma.Decimal; totalCredit: Prisma.Decimal; difference: Prisma.Decimal } | { ok: false; error: string }> {
+  const entry = await getOwnedJournalEntryById(organizationId, journalEntryId);
+  if (!entry) return { ok: false, error: "Journal entry not found." };
+
+  const fiscalYear = await getOwnedFiscalYear(organizationId, entry.companyId, entry.fiscalYearId);
+  if (!fiscalYear || fiscalYear.companyId !== entry.companyId) {
+    return { ok: false, error: "Fiscal year is not valid for this company." };
+  }
+
+  const accountingPeriod = await getOwnedAccountingPeriod(
+    organizationId,
+    entry.companyId,
+    entry.accountingPeriodId
+  );
+  if (!accountingPeriod) {
+    return { ok: false, error: "Accounting period is not valid for this company." };
+  }
+
+  const dateCheck = validateEntryDateInPeriod(fiscalYear, accountingPeriod, entry.entryDate);
+  if (!dateCheck.ok) return { ok: false, error: dateCheck.error };
+
+  const linesCheck = await verifyLines(organizationId, entry.companyId, entry.lines.map((line) => ({
+    accountId: line.accountId,
+    description: line.description ?? undefined,
+    reference: line.reference ?? undefined,
+    debit: line.debit,
+    credit: line.credit,
+  })), { allowIncompleteDraftLines: false, requireActiveAccounts: true });
+
+  if (!linesCheck.ok) return linesCheck;
+  if (linesCheck.validLineCount < 2) {
+    return { ok: false, error: "At least two valid journal lines are required." };
+  }
+
+  const balance = await validateJournalEntryBalance(entry.id);
+  if (!balance.balanced) return { ok: false, error: "Journal entry is not balanced." };
+
+  return {
+    ok: true,
+    balanced: true,
+    totalDebit: balance.totalDebit,
+    totalCredit: balance.totalCredit,
+    difference: balance.difference,
+  };
 }
 
 // ------------------------------
@@ -280,7 +363,7 @@ export async function createJournalEntry(
   // Verify every referenced account exists and belongs to this company
   // (spec section 5), and every line's amounts are valid (spec section 8),
   // before creating anything.
-  const linesCheck = await verifyLines(organizationId, company.id, input.lines);
+  const linesCheck = await verifyLines(organizationId, company.id, input.lines, { allowIncompleteDraftLines: true });
   if (!linesCheck.ok) {
     return { ok: false, error: linesCheck.error };
   }
@@ -494,14 +577,26 @@ export async function updateJournalEntry(
     return { ok: false, error: dateCheck.error };
   }
 
-  const linesCheck = await verifyLines(organizationId, companyId, input.lines);
+  const linesCheck = await verifyLines(organizationId, companyId, input.lines, { allowIncompleteDraftLines: true });
   if (!linesCheck.ok) {
     return { ok: false, error: linesCheck.error };
   }
 
   const entry = await prisma.$transaction(async (tx) => {
+    const current = await tx.journalEntry.findFirst({
+      where: { id: existing.id, company: { organizationId } },
+      select: { id: true, companyId: true, status: true },
+    });
+
+    if (!current || current.companyId !== companyId) {
+      throw new Error("JOURNAL_ENTRY_NOT_FOUND");
+    }
+    if (current.status !== "DRAFT") {
+      throw new Error("JOURNAL_ENTRY_NOT_EDITABLE");
+    }
+
     await tx.journalEntry.update({
-      where: { id: existing.id },
+      where: { id: current.id },
       data: {
         fiscalYearId: fiscalYear.id,
         accountingPeriodId: accountingPeriod.id,
@@ -530,10 +625,24 @@ export async function updateJournalEntry(
     }
 
     return tx.journalEntry.findUniqueOrThrow({
-      where: { id: existing.id },
+      where: { id: current.id },
       include: { lines: true },
     });
+  }).catch((error: unknown) => {
+    if (error instanceof Error && error.message === "JOURNAL_ENTRY_NOT_FOUND") {
+      return null;
+    }
+    if (error instanceof Error && error.message === "JOURNAL_ENTRY_NOT_EDITABLE") {
+      return null;
+    }
+    throw error;
   });
+
+  if (!entry) {
+    const latest = await getOwnedJournalEntryById(organizationId, journalEntryId);
+    if (!latest) return { ok: false, error: "Journal entry not found." };
+    return { ok: false, error: `A ${latest.status} journal entry cannot be edited.` };
+  }
 
   return { ok: true, entry };
 }

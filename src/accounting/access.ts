@@ -81,6 +81,29 @@ export async function getOwnedAccount(
 // / createdBy are included too (Phase 4A-2 basic detail screen displays all
 // three) — createdBy deliberately selects only { id, name }, never
 // email/passwordHash (spec section 12).
+/**
+ * Fetches a journal entry by id while deriving its company from the
+ * authenticated organization. This is the safer form for write/validation
+ * paths: the browser does not get to choose the company that owns the entry.
+ */
+export async function getOwnedJournalEntryById(
+  organizationId: string,
+  journalEntryId: string
+) {
+  return prisma.journalEntry.findFirst({
+    where: {
+      id: journalEntryId,
+      company: { organizationId },
+    },
+    include: {
+      lines: { include: { account: true }, orderBy: { lineNumber: "asc" } },
+      fiscalYear: true,
+      accountingPeriod: true,
+      createdBy: { select: { id: true, name: true } },
+    },
+  });
+}
+
 export async function getOwnedJournalEntry(
   organizationId: string,
   companyId: string,

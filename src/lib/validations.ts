@@ -232,10 +232,13 @@ export type JournalEntrySourceTypeInput = z.infer<typeof journalEntrySourceTypeS
 // src/accounting/journal-entries.ts, never here.
 const decimalAmountSchema = z
   .union([z.string(), z.number()])
-  .refine((v) => `${v}`.trim() !== "" && !Number.isNaN(Number(v)), {
-    message: "Enter a valid amount",
-  })
-  .refine((v) => Number(v) >= 0, { message: "Amount cannot be negative" });
+  .refine((v) => {
+    const raw = `${v}`.trim();
+    return /^(?:0|[0-9]{1,15})(?:\.[0-9]{1,4})?$/.test(raw);
+  }, { message: "Enter a valid amount" })
+  .refine((v) => !`${v}`.trim().startsWith("-"), {
+    message: "Amount cannot be negative",
+  });
 
 export const journalEntryLineSchema = z.object({
   accountId: z.string().trim().min(1, "Account is required"),
