@@ -49,6 +49,7 @@ export async function createTaxCodeAction(input: {
   if (result.ok) {
     revalidatePath(`/dashboard/companies/${parsed.data.companyId}`);
     revalidatePath(`/dashboard/tax-codes`);
+    revalidatePath(`/companies/${parsed.data.companyId}/settings/tax`);
   }
 
   return result;
@@ -83,6 +84,7 @@ export async function updateTaxCodeAction(
   if (result.ok) {
     revalidatePath(`/dashboard/companies/${parsed.data.companyId}`);
     revalidatePath(`/dashboard/tax-codes`);
+    revalidatePath(`/companies/${parsed.data.companyId}/settings/tax`);
   }
 
   return result;
@@ -122,6 +124,7 @@ export async function setTaxCodeActiveAction(
   if (result.ok) {
     revalidatePath(`/dashboard/companies/${companyId}`);
     revalidatePath(`/dashboard/tax-codes`);
+    revalidatePath(`/companies/${companyId}/settings/tax`);
   }
 
   return result;

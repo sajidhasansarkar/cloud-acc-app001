@@ -73,6 +73,49 @@ export type AccountSortKey = (typeof ACCOUNT_SORT_OPTIONS)[number]["value"];
 
 export const DEFAULT_ACCOUNT_SORT: AccountSortKey = "code_asc";
 
+// ------------------------------
+// Tax Codes (Phase 3B-2)
+// ------------------------------
+
+// Mirrors the TaxType enum in prisma/schema.prisma — same reasoning as
+// ACCOUNT_TYPES above: a single ordered list drives every <Select> in the
+// UI instead of importing the Prisma enum into client components.
+export const TAX_TYPES = ["GST", "HST", "VAT", "SALES_TAX", "OTHER"] as const;
+
+export const TAX_TYPE_LABELS: Record<(typeof TAX_TYPES)[number], string> = {
+  GST: "GST",
+  HST: "HST",
+  VAT: "VAT",
+  SALES_TAX: "Sales Tax",
+  OTHER: "Other",
+};
+
+// Mirrors the CalculationMethod enum. Purely descriptive metadata in this
+// phase (see src/tax/tax-codes.ts) — no calculation is implemented here.
+export const CALCULATION_METHODS = ["STANDARD_RATE", "ZERO_RATE", "EXEMPT", "OUT_OF_SCOPE"] as const;
+
+export const CALCULATION_METHOD_LABELS: Record<(typeof CALCULATION_METHODS)[number], string> = {
+  STANDARD_RATE: "Standard Rate",
+  ZERO_RATE: "Zero-Rated",
+  EXEMPT: "Exempt",
+  OUT_OF_SCOPE: "Out of Scope",
+};
+
+// TaxCode.isActive is a plain boolean at the data layer, same pattern as
+// Account.isActive — the UI presents it as a two-value status.
+export const TAX_CODE_STATUSES = ["ACTIVE", "INACTIVE"] as const;
+export type TaxCodeStatus = (typeof TAX_CODE_STATUSES)[number];
+
+export const TAX_CODE_STATUS_LABELS: Record<TaxCodeStatus, string> = {
+  ACTIVE: "Active",
+  INACTIVE: "Inactive",
+};
+
+// The four countries this phase supports (spec section "COUNTRIES"), same
+// set as INITIAL_COUNTRIES — kept as its own named export so tax UI code
+// reads intent rather than reaching into the company-settings constant.
+export const TAX_COUNTRIES = INITIAL_COUNTRIES;
+
 export const COMPANY_SORT_OPTIONS = [
   { value: "createdAt_desc", label: "Newest first" },
   { value: "createdAt_asc", label: "Oldest first" },

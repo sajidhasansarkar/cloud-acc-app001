@@ -30,10 +30,10 @@ type SettingsPlaceholder = {
 
 type SettingsNavItem = SettingsTab | SettingsPlaceholder;
 
-// The four Phase 2B-2B-2 tabs. "Fiscal Period" deliberately points at the
-// existing, already-built Phase 2B-2B-1 route instead of a page nested
-// under this tab bar — that page keeps its own header/actions and is not
-// rebuilt here (see spec section 5).
+// The four Phase 2B-2B-2 tabs, plus Tax (Phase 3B-2). "Fiscal Period"
+// deliberately points at the existing, already-built Phase 2B-2B-1 route
+// instead of a page nested under this tab bar — that page keeps its own
+// header/actions and is not rebuilt here (see spec section 5).
 function getTabs(companyId: string): SettingsNavItem[] {
   const base = `/companies/${companyId}/settings`;
   return [
@@ -41,10 +41,10 @@ function getTabs(companyId: string): SettingsNavItem[] {
     { label: "Accounting", href: `${base}/accounting`, icon: Calculator, implemented: true },
     { label: "Fiscal Period", href: `${base}/fiscal-period`, icon: CalendarRange, implemented: true },
     { label: "Country & Currency", href: `${base}/country-currency`, icon: Globe2, implemented: true },
+    { label: "Tax", href: `${base}/tax`, icon: ReceiptText, implemented: true },
     // Future modules — placeholders only, per spec section 8. Not routes,
     // not clickable, so there's nothing here that could be mistaken for
     // real functionality.
-    { label: "Tax", icon: ReceiptText, implemented: false },
     { label: "Chart of Accounts", icon: ListTree, implemented: false },
     { label: "Bank Rules", icon: Landmark, implemented: false },
     { label: "AI Rules", icon: Bot, implemented: false },
