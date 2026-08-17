@@ -297,7 +297,7 @@ export async function updateNormalizedCandidate(organizationId: string, companyI
       correctedAt: new Date(),
     };
     const updated = await prisma.normalizedTransactionCandidate.update({ where: { id: candidate.id }, data });
-    await prisma.aiReviewRecord.updateMany({ where: { candidateId: updated.id }, data: { status: "NOT_REVIEWED", decision: null, reviewedById: null, reviewedAt: null, humanAccountId: null, humanDebit: null, humanCredit: null, humanAmount: null, humanNotes: null } });
+    await prisma.aIReviewRecord.updateMany({ where: { candidateId: updated.id }, data: { status: "NOT_REVIEWED", decision: null, reviewedById: null, reviewedAt: null, humanAccountId: null, humanDebit: null, humanCredit: null, humanAmount: null, humanNotes: null } });
     return { ok: true as const, candidate: { id: updated.id } };
   } catch {
     return { ok: false as const, error: "Unable to save the correction. Check the values and try again." };

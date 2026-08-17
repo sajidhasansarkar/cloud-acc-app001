@@ -225,7 +225,7 @@ export async function prepareAIReview(
   const warningCount = payload.transactionCandidate.warnings.length;
   const status: AIReviewStatus = payload.transactionCandidate.confidence === "LOW" || warningCount > 0 ? "NEEDS_HUMAN_REVIEW" : "READY";
 
-  const review = await prisma.aiReviewRecord.upsert({
+  const review = await prisma.aIReviewRecord.upsert({
     where: { candidateId },
     create: { candidateId, status, contextVersion: AI_CONTEXT_VERSION, createdById: userId },
     update: { status, contextVersion: AI_CONTEXT_VERSION, createdById: userId },
@@ -243,7 +243,7 @@ export async function getAIReviewReadiness(
 ): Promise<AIReviewReadiness | null> {
   const candidate = await loadCandidateScope(organizationId, companyId, documentId, candidateId);
   if (!candidate) return null;
-  const review = await prisma.aiReviewRecord.findUnique({ where: { candidateId }, select: { status: true, contextVersion: true } });
+  const review = await prisma.aIReviewRecord.findUnique({ where: { candidateId }, select: { status: true, contextVersion: true } });
   const warnings = Array.isArray(candidate.warnings) ? candidate.warnings.map(String) : [];
   const source = candidate.sourceSheetName
     ? `Sheet: ${candidate.sourceSheetName}${candidate.sourceRowNumber ? ` · Row: ${candidate.sourceRowNumber}` : ""}`

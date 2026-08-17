@@ -83,7 +83,7 @@ export async function generateAccountingAISuggestion(
   if (!payload) return { ok: false as const, error: "Transaction candidate not found." };
 
   const provider = getAccountingAIProvider();
-  const review = await prisma.aiReviewRecord.upsert({
+  const review = await prisma.aIReviewRecord.upsert({
     where: { candidateId },
     create: { candidateId, status: "REVIEWING", provider: provider.provider, model: provider.model, contextVersion: ACCOUNTING_REVIEW_VERSION, createdById: userId },
     update: { status: "REVIEWING", provider: provider.provider, model: provider.model, contextVersion: ACCOUNTING_REVIEW_VERSION, createdById: userId, decision: null, reviewedById: null, reviewedAt: null, humanAccountId: null, humanDebit: null, humanCredit: null, humanAmount: null, humanNotes: null },
@@ -110,7 +110,7 @@ export async function generateAccountingAISuggestion(
       if (account.code !== alternative.code || account.name !== alternative.name) throw new Error("AI returned an account code or name that does not match the company Chart of Accounts.");
     }
 
-    const suggestionRow = await prisma.aiReviewSuggestion.create({
+    const suggestionRow = await prisma.aIReviewSuggestion.create({
       data: {
         candidateId,
         provider: provider.provider,
@@ -129,8 +129,8 @@ export async function generateAccountingAISuggestion(
     });
 
     const status = suggestion.confidence === "LOW" || suggestion.warnings.length ? "NEEDS_HUMAN_REVIEW" : "NEEDS_HUMAN_REVIEW";
-    await prisma.aiReviewRecord.update({ where: { id: review.id }, data: { status, provider: provider.provider, model: provider.model, contextVersion: ACCOUNTING_REVIEW_VERSION } });
-    await prisma.aiReviewAudit.create({
+    await prisma.aIReviewRecord.update({ where: { id: review.id }, data: { status, provider: provider.provider, model: provider.model, contextVersion: ACCOUNTING_REVIEW_VERSION } });
+    await prisma.aIReviewAudit.create({
       data: {
         candidateId,
         suggestionId: suggestionRow.id,
@@ -148,8 +148,8 @@ export async function generateAccountingAISuggestion(
     const safeError = error instanceof Error && /structured validation|invalid|outside|cannot both|suggested accounts/i.test(error.message)
       ? error.message
       : "AI review failed. Please retry.";
-    await prisma.aiReviewRecord.update({ where: { id: review.id }, data: { status: "FAILED", provider: provider.provider, model: provider.model, contextVersion: ACCOUNTING_REVIEW_VERSION } });
-    await prisma.aiReviewAudit.create({
+    await prisma.aIReviewRecord.update({ where: { id: review.id }, data: { status: "FAILED", provider: provider.provider, model: provider.model, contextVersion: ACCOUNTING_REVIEW_VERSION } });
+    await prisma.aIReviewAudit.create({
       data: { candidateId, action: "FAILED", provider: provider.provider, model: provider.model, contextVersion: ACCOUNTING_REVIEW_VERSION, userId },
     });
     return { ok: false as const, error: safeError };
@@ -164,7 +164,7 @@ export async function getAccountingAIReview(
 ) {
   const candidate = await loadScopedCandidate(organizationId, companyId, documentId, candidateId);
   if (!candidate) return null;
-  const review = await prisma.aiReviewRecord.findUnique({
+  const review = await prisma.aIReviewRecord.findUnique({
     where: { candidateId },
     include: {
       suggestions: { orderBy: { createdAt: "desc" }, take: 5, include: { suggestedAccount: { select: { id: true, code: true, name: true, type: true } } } },
@@ -187,7 +187,7 @@ async function recordHumanDecision(
 ) {
   const candidate = await loadScopedCandidate(organizationId, companyId, documentId, candidateId);
   if (!candidate) return { ok: false as const, error: "Transaction candidate not found." };
-  const latestSuggestion = await prisma.aiReviewSuggestion.findFirst({ where: { candidateId }, orderBy: { createdAt: "desc" } });
+  const latestSuggestion = await prisma.aIReviewSuggestion.findFirst({ where: { candidateId }, orderBy: { createdAt: "desc" } });
   if (!latestSuggestion) return { ok: false as const, error: "No AI suggestion is available for review." };
 
   if (values.debit) moneySchema.parse(values.debit);
@@ -234,7 +234,7 @@ async function recordHumanDecision(
 }
 
 export async function acceptAccountingAISuggestion(organizationId: string, companyId: string, documentId: string, candidateId: string, userId: string) {
-  const latest = await prisma.aiReviewSuggestion.findFirst({ where: { candidateId }, orderBy: { createdAt: "desc" } });
+  const latest = await prisma.aIReviewSuggestion.findFirst({ where: { candidateId }, orderBy: { createdAt: "desc" } });
   if (!latest) return { ok: false as const, error: "No AI suggestion is available for review." };
   return recordHumanDecision(organizationId, companyId, documentId, candidateId, userId, "ACCEPTED", {
     accountId: latest.suggestedAccountId,
