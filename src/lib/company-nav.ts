@@ -24,15 +24,16 @@ export type CompanyNavItem = {
 };
 
 // "Overview" (Phase 2B-2A), "Settings" (Phase 2B-2B-2 — General,
-// Accounting, Fiscal Period, Country & Currency), and "Chart of Accounts"
-// (Phase 3A-2) are functional. Every other module is still a placeholder
+// Accounting, Fiscal Period, Country & Currency), "Chart of Accounts"
+// (Phase 3A-2), and "Journal Entries" (Phase 4A-2 — basic list/create/
+// view/edit UI) are functional. Every other module is still a placeholder
 // route (see section 3 of the original Phase 2B-2A spec) and renders as a
 // disabled, "Soon"-badged item here, matching the pattern already used by
 // the org-level sidebar in src/lib/nav.ts.
 export const COMPANY_NAV_ITEMS: CompanyNavItem[] = [
   { label: "Overview", segment: "", icon: LayoutDashboard, implemented: true },
   { label: "Transactions", segment: "transactions", icon: ArrowLeftRight, implemented: false },
-  { label: "Journal Entries", segment: "journal-entries", icon: BookText, implemented: false },
+  { label: "Journal Entries", segment: "journal-entries", icon: BookText, implemented: true },
   { label: "Banking", segment: "banking", icon: Landmark, implemented: false },
   { label: "Chart of Accounts", segment: "chart-of-accounts", icon: ListTree, implemented: true },
   { label: "General Ledger", segment: "general-ledger", icon: BookOpenCheck, implemented: false },

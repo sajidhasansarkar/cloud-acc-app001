@@ -211,9 +211,11 @@ export async function createJournalEntry(
     return { ok: false, error: "This entry number is already used for this company." };
   }
 
-  if (input.lines.length === 0) {
-    return { ok: false, error: "A journal entry must have at least one line." };
-  }
+  // Phase 4A-2 (basic Journal Entry UI) saves a DRAFT with no lines at
+  // all — the complete Debit/Credit line entry system and balance
+  // validation are Phase 4A-3, so an empty `lines` array is valid here.
+  // Whenever lines *are* provided (now or once 4A-3 lands), they still go
+  // through the same account-ownership and amount checks below.
 
   // Verify every referenced account exists and belongs to this company
   // (spec section 5) before creating anything. Deduplicate ids so we
@@ -302,9 +304,87 @@ export async function listJournalEntries(
       ...(filters?.accountingPeriodId ? { accountingPeriodId: filters.accountingPeriodId } : {}),
       ...(filters?.fiscalYearId ? { fiscalYearId: filters.fiscalYearId } : {}),
     },
-    include: { lines: true },
+    // createdBy selects only { id, name } — never email/passwordHash
+    // (spec section 12) — for the list's "Created By" column (Phase 4A-2).
+    include: { lines: true, createdBy: { select: { id: true, name: true } } },
     orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }],
   });
+}
+
+// ------------------------------
+// Update (Phase 4A-2 — basic header editing only)
+// ------------------------------
+
+export type UpdateJournalEntryHeaderInput = {
+  companyId: string;
+  fiscalYearId: string;
+  accountingPeriodId: string;
+  entryDate: Date;
+  reference?: string;
+  description?: string;
+  label?: string;
+  sourceType?: JournalEntrySourceType;
+};
+
+/**
+ * Updates a journal entry's basic header fields (spec section 10):
+ * entryDate, fiscalYearId, accountingPeriodId, reference, description,
+ * label, sourceType. Deliberately does NOT touch entryNumber, status, or
+ * lines — entryNumber isn't in the editable field list, status changes go
+ * through setJournalEntryStatus, and line editing is Phase 4A-3.
+ *
+ * Only DRAFT entries may be edited (spec section 10: "Do not allow editing
+ * POSTED entries" / "VOID entries should not be treated as normal
+ * editable entries").
+ */
+export async function updateJournalEntryHeader(
+  organizationId: string,
+  companyId: string,
+  journalEntryId: string,
+  input: UpdateJournalEntryHeaderInput
+): Promise<JournalEntryResult> {
+  const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
+  if (!existing) {
+    return { ok: false, error: "Journal entry not found." };
+  }
+  if (existing.status !== "DRAFT") {
+    return { ok: false, error: `A ${existing.status} journal entry cannot be edited.` };
+  }
+
+  const fiscalYear = await getOwnedFiscalYear(organizationId, companyId, input.fiscalYearId);
+  if (!fiscalYear) {
+    return { ok: false, error: "Fiscal year not found for this company." };
+  }
+
+  const accountingPeriod = await getOwnedAccountingPeriod(
+    organizationId,
+    companyId,
+    input.accountingPeriodId
+  );
+  if (!accountingPeriod) {
+    return { ok: false, error: "Accounting period not found for this company." };
+  }
+
+  const dateCheck = validateEntryDateInPeriod(fiscalYear, accountingPeriod, input.entryDate);
+  if (!dateCheck.ok) {
+    return { ok: false, error: dateCheck.error };
+  }
+
+  const entry = await prisma.journalEntry.update({
+    where: { id: existing.id },
+    data: {
+      fiscalYearId: fiscalYear.id,
+      accountingPeriodId: accountingPeriod.id,
+      entryDate: input.entryDate,
+      reference: input.reference?.trim() || null,
+      description: input.description?.trim() || null,
+      label: input.label?.trim() || null,
+      sourceType: input.sourceType ?? existing.sourceType,
+    },
+    include: { lines: true },
+  });
+
+  return { ok: true, entry };
 }
 
 // ------------------------------

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireActiveOrganization } from "@/lib/session";
 import { canManageJournalEntries } from "@/lib/rbac";
-import { createJournalEntrySchema, updateJournalEntrySchema } from "@/lib/validations";
+import { createJournalEntrySchema, updateJournalEntryHeaderSchema } from "@/lib/validations";
 import {
   createJournalEntry,
   getJournalEntry,
@@ -11,21 +11,25 @@ import {
   postJournalEntry,
   voidJournalEntry,
   deleteJournalEntry,
+  updateJournalEntryHeader,
   type JournalEntryResult,
 } from "@/accounting/journal-entries";
 import type { JournalEntry, JournalEntryLine, JournalEntrySourceType } from "@prisma/client";
 
 /**
- * Auth/validation entry points a future Journal Entry UI (Phase 4A-3) will
- * call. Each one: requires a signed-in user + active organization, checks
- * the role can manage journal entries, validates input with zod, then
- * delegates to src/accounting/journal-entries.ts — which re-checks
- * ownership itself rather than trusting this layer alone. Same shape as
+ * Auth/validation entry points the Journal Entry UI calls. Each one:
+ * requires a signed-in user + active organization, checks the role can
+ * manage journal entries, validates input with zod, then delegates to
+ * src/accounting/journal-entries.ts — which re-checks ownership itself
+ * rather than trusting this layer alone. Same shape as
  * src/actions/account-mappings.ts / src/actions/tax-codes.ts.
  *
- * There is deliberately no "update" or "post" UI wiring beyond the status
- * action below — this phase is database foundation only (spec section 17:
- * no Journal Entry UI / new-entry form yet).
+ * createJournalEntryAction is called by the basic New Journal Entry form
+ * (Phase 4A-2) with an empty `lines` array — the complete Debit/Credit
+ * line entry UI and balance validation are Phase 4A-3.
+ * updateJournalEntryHeaderAction is the Phase 4A-2 basic Edit screen's
+ * only write path (header fields only, DRAFT entries only). Posting/void
+ * still have no UI wiring beyond the status actions below.
  */
 
 export async function createJournalEntryAction(input: {
@@ -78,6 +82,50 @@ export async function listJournalEntriesAction(
 export async function getJournalEntryAction(companyId: string, journalEntryId: string) {
   const { organization } = await requireActiveOrganization();
   return getJournalEntry(organization.id, companyId, journalEntryId);
+}
+
+/**
+ * Basic header editing (Phase 4A-2 — spec section 10). Only DRAFT entries
+ * can be edited; updateJournalEntryHeader itself re-checks this rather
+ * than trusting the UI to only ever call it from the edit screen.
+ */
+export async function updateJournalEntryHeaderAction(
+  journalEntryId: string,
+  input: {
+    companyId: string;
+    fiscalYearId: string;
+    accountingPeriodId: string;
+    entryDate: Date | string;
+    reference?: string;
+    description?: string;
+    label?: string;
+    sourceType?: JournalEntrySourceType;
+  }
+): Promise<JournalEntryResult> {
+  const { role, organization } = await requireActiveOrganization();
+
+  if (!canManageJournalEntries(role)) {
+    return { ok: false, error: "You don't have permission to manage journal entries." };
+  }
+
+  const parsed = updateJournalEntryHeaderSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  const result = await updateJournalEntryHeader(
+    organization.id,
+    parsed.data.companyId,
+    journalEntryId,
+    parsed.data
+  );
+
+  if (result.ok) {
+    revalidatePath(`/companies/${parsed.data.companyId}/journal-entries`);
+    revalidatePath(`/companies/${parsed.data.companyId}/journal-entries/${journalEntryId}`);
+  }
+
+  return result;
 }
 
 export async function postJournalEntryAction(

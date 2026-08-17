@@ -7,6 +7,7 @@ import { generateAccountingPeriodsSchema, periodStatusSchema } from "@/lib/valid
 import {
   generateAndCreateAccountingPeriods,
   getCurrentAccountingPeriod,
+  listAccountingPeriods,
   setAccountingPeriodStatus,
   type GeneratePeriodsResult,
   type AccountingPeriodResult,
@@ -41,6 +42,21 @@ export async function generateAccountingPeriodsAction(input: {
   }
 
   return result;
+}
+
+/**
+ * Lists the accounting periods belonging to one fiscal year, scoped to the
+ * caller's organization. Used by the Journal Entry form (Phase 4A-2 spec
+ * section 6/13) to refetch the Accounting Period options whenever the user
+ * changes the selected Fiscal Year, without ever trusting a client-supplied
+ * fiscalYearId on its own — listAccountingPeriods re-derives ownership.
+ */
+export async function listAccountingPeriodsAction(
+  companyId: string,
+  fiscalYearId: string
+): Promise<AccountingPeriod[] | null> {
+  const { organization } = await requireActiveOrganization();
+  return listAccountingPeriods(organization.id, companyId, fiscalYearId);
 }
 
 export async function getCurrentAccountingPeriodAction(

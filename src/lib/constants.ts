@@ -151,6 +151,36 @@ export const MAPPING_STATUS_LABELS: Record<MappingStatus, string> = {
   INACTIVE: "Inactive",
 };
 
+// ------------------------------
+// Journal Entries (Phase 4A-2)
+// ------------------------------
+
+// Mirrors the JournalEntrySourceType enum in prisma/schema.prisma — same
+// reasoning as ACCOUNT_TYPES / MAPPING_SOURCE_TYPES above: a single
+// ordered list drives the Source Type <Select> instead of importing the
+// Prisma enum into client components.
+export const JOURNAL_ENTRY_SOURCE_TYPES = ["MANUAL", "IMPORT", "AI", "BANK", "OTHER"] as const;
+
+export const JOURNAL_ENTRY_SOURCE_TYPE_LABELS: Record<(typeof JOURNAL_ENTRY_SOURCE_TYPES)[number], string> = {
+  MANUAL: "Manual",
+  IMPORT: "Import",
+  AI: "AI",
+  BANK: "Bank",
+  OTHER: "Other",
+};
+
+// Mirrors the JournalEntryStatus enum. Phase 4A-2 only ever creates DRAFT
+// entries (no posting/void workflow yet — spec section 11), but the label
+// map covers all three values so the status badge renders correctly no
+// matter how a record ends up in that state.
+export const JOURNAL_ENTRY_STATUSES = ["DRAFT", "POSTED", "VOID"] as const;
+
+export const JOURNAL_ENTRY_STATUS_LABELS: Record<(typeof JOURNAL_ENTRY_STATUSES)[number], string> = {
+  DRAFT: "Draft",
+  POSTED: "Posted",
+  VOID: "Void",
+};
+
 export const COMPANY_SORT_OPTIONS = [
   { value: "createdAt_desc", label: "Newest first" },
   { value: "createdAt_asc", label: "Oldest first" },

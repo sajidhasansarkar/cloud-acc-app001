@@ -77,7 +77,10 @@ export async function getOwnedAccount(
 // must belong to the caller's organization. Same rule as everywhere else
 // in this file: a bare journalEntryId is never trusted on its own. Lines
 // are included since almost every caller needs them (balance checks,
-// display) and it avoids a second round trip.
+// display) and it avoids a second round trip. fiscalYear / accountingPeriod
+// / createdBy are included too (Phase 4A-2 basic detail screen displays all
+// three) — createdBy deliberately selects only { id, name }, never
+// email/passwordHash (spec section 12).
 export async function getOwnedJournalEntry(
   organizationId: string,
   companyId: string,
@@ -89,6 +92,11 @@ export async function getOwnedJournalEntry(
       companyId,
       company: { organizationId },
     },
-    include: { lines: true },
+    include: {
+      lines: true,
+      fiscalYear: true,
+      accountingPeriod: true,
+      createdBy: { select: { id: true, name: true } },
+    },
   });
 }

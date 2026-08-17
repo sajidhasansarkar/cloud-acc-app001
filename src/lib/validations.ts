@@ -255,7 +255,14 @@ const journalEntryBaseSchema = {
   description: optionalTrimmed(500),
   label: optionalTrimmed(120),
   sourceType: journalEntrySourceTypeSchema.default("MANUAL"),
-  lines: z.array(journalEntryLineSchema).min(1, "A journal entry must have at least one line"),
+  // Phase 4A-2 (basic Journal Entry UI) intentionally saves a Draft with
+  // no lines at all — the complete Debit/Credit line entry system and
+  // balance validation are Phase 4A-3. `lines` therefore defaults to an
+  // empty array here rather than requiring at least one, but the shape
+  // (and validateLineAmounts in src/accounting/journal-entries.ts) still
+  // applies fully whenever lines *are* provided, so this schema keeps
+  // working unchanged once 4A-3 starts sending real lines.
+  lines: z.array(journalEntryLineSchema).default([]),
 };
 
 export const createJournalEntrySchema = z.object(journalEntryBaseSchema);
@@ -271,6 +278,29 @@ export const setJournalEntryStatusSchema = z.object({
   status: journalEntryStatusSchema,
 });
 export type SetJournalEntryStatusInput = z.infer<typeof setJournalEntryStatusSchema>;
+
+// ------------------------------
+// Journal Entries — basic header editing (Phase 4A-2)
+// ------------------------------
+
+// A DRAFT journal entry's header fields, editable from the basic Edit
+// screen (spec section 10). Deliberately narrower than
+// updateJournalEntrySchema above: no `entryNumber` (not in the editable
+// field list) and no `lines` (Phase 4A-3 owns line editing). Kept as its
+// own schema rather than `.pick()`ing from journalEntryBaseSchema so the
+// two can evolve independently once 4A-3 adds real line editing to the
+// full update schema.
+export const updateJournalEntryHeaderSchema = z.object({
+  companyId: z.string().trim().min(1, "companyId is required"),
+  fiscalYearId: z.string().trim().min(1, "Fiscal year is required"),
+  accountingPeriodId: z.string().trim().min(1, "Accounting period is required"),
+  entryDate: z.coerce.date({ invalid_type_error: "Enter a valid entry date" }),
+  reference: optionalTrimmed(100),
+  description: optionalTrimmed(500),
+  label: optionalTrimmed(120),
+  sourceType: journalEntrySourceTypeSchema.default("MANUAL"),
+});
+export type UpdateJournalEntryHeaderInput = z.infer<typeof updateJournalEntryHeaderSchema>;
 
 // ------------------------------
 // Company Settings — Accounting tab (Phase 2B-2B-2)
