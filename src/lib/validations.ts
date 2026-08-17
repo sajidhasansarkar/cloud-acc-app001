@@ -216,6 +216,63 @@ export type UpdateAccountMappingInput = z.infer<typeof updateAccountMappingSchem
 export type AccountMappingFieldErrors = Partial<Record<keyof CreateAccountMappingInput, string>>;
 
 // ------------------------------
+// Journal Entries (Phase 4A-1)
+// ------------------------------
+
+export const journalEntryStatusSchema = z.enum(["DRAFT", "POSTED", "VOID"]);
+export type JournalEntryStatusInput = z.infer<typeof journalEntryStatusSchema>;
+
+export const journalEntrySourceTypeSchema = z.enum(["MANUAL", "IMPORT", "AI", "BANK", "OTHER"]);
+export type JournalEntrySourceTypeInput = z.infer<typeof journalEntrySourceTypeSchema>;
+
+// Money amounts as decimal strings/numbers — z.coerce.number() would lose
+// precision the same way a float column would (spec section 8), so this
+// keeps the value as a string and only checks its shape; the actual
+// Prisma.Decimal math happens server-side in
+// src/accounting/journal-entries.ts, never here.
+const decimalAmountSchema = z
+  .union([z.string(), z.number()])
+  .refine((v) => `${v}`.trim() !== "" && !Number.isNaN(Number(v)), {
+    message: "Enter a valid amount",
+  })
+  .refine((v) => Number(v) >= 0, { message: "Amount cannot be negative" });
+
+const journalEntryLineSchema = z.object({
+  accountId: z.string().trim().min(1, "Account is required"),
+  description: optionalTrimmed(500),
+  reference: optionalTrimmed(100),
+  debit: decimalAmountSchema,
+  credit: decimalAmountSchema,
+});
+
+const journalEntryBaseSchema = {
+  companyId: z.string().trim().min(1, "companyId is required"),
+  fiscalYearId: z.string().trim().min(1, "Fiscal year is required"),
+  accountingPeriodId: z.string().trim().min(1, "Accounting period is required"),
+  entryNumber: z.string().trim().min(1, "Entry number is required").max(50),
+  entryDate: z.coerce.date({ invalid_type_error: "Enter a valid entry date" }),
+  reference: optionalTrimmed(100),
+  description: optionalTrimmed(500),
+  label: optionalTrimmed(120),
+  sourceType: journalEntrySourceTypeSchema.default("MANUAL"),
+  lines: z.array(journalEntryLineSchema).min(1, "A journal entry must have at least one line"),
+};
+
+export const createJournalEntrySchema = z.object(journalEntryBaseSchema);
+export type CreateJournalEntryInput = z.infer<typeof createJournalEntrySchema>;
+
+export const updateJournalEntrySchema = z.object(journalEntryBaseSchema);
+export type UpdateJournalEntryInput = z.infer<typeof updateJournalEntrySchema>;
+
+export type JournalEntryFieldErrors = Partial<Record<keyof CreateJournalEntryInput, string>>;
+
+export const setJournalEntryStatusSchema = z.object({
+  companyId: z.string().trim().min(1, "companyId is required"),
+  status: journalEntryStatusSchema,
+});
+export type SetJournalEntryStatusInput = z.infer<typeof setJournalEntryStatusSchema>;
+
+// ------------------------------
 // Company Settings — Accounting tab (Phase 2B-2B-2)
 // ------------------------------
 

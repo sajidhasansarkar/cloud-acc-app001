@@ -1,5 +1,5 @@
 // Accounting Platform — Phase 1 + Phase 2A + Phase 2B-1 + Phase 3A-1 + Phase
-// 3B-1 + Phase 3C-1 schema
+// 3B-1 + Phase 3C-1 + Phase 4A-1 schema
 // Phase 1: auth, organizations, memberships, companies (foundation).
 // Phase 2A: full company management + reusable country configuration.
 // Phase 2B-1: fiscal year / accounting period foundation (backend only —
@@ -15,8 +15,11 @@
 // only the reusable rule structure (source → Account / TaxCode) — nothing
 // reads or applies these mappings to a real transaction yet, since
 // transactions / bank import don't exist yet.
-// Do not add journal entries/transactions/ledger/AI models here yet —
-// those belong to later phases.
+// Phase 4A-1: journal entry database foundation (backend only — no UI
+// yet). See the JournalEntry / JournalEntryLine models below. Only basic
+// DRAFT/POSTED/VOID status + balance/date validation exist — no automatic
+// posting, numbering, file upload, OCR, AI extraction, bank import,
+// general ledger, or financial reports yet. Those belong to later phases.
 
 generator client {
   provider = "prisma-client-js"
@@ -139,6 +142,39 @@ enum MappingSourceType {
   TRANSACTION_TYPE
 }
 
+// Journal Entry database foundation (Phase 4A-1). Lifecycle state of a
+// journal entry (spec section 2).
+//  - DRAFT: freely editable, not yet part of the books. Safe to hard-delete.
+//  - POSTED: finalized. Never hard-deleted — see the JournalEntry model
+//    comment and spec section 14. Reversed only by moving to VOID.
+//  - VOID: cancelled/reversed. Terminal — nothing transitions out of VOID.
+// Deliberately just these three today ("do not implement complex posting
+// logic yet" — spec section 2), but kept as its own enum (rather than
+// reusing PeriodStatus) since a journal entry's lifecycle is a different
+// concept from a period's open/closed/locked state, even though both will
+// eventually interact once real posting logic exists.
+enum JournalEntryStatus {
+  DRAFT
+  POSTED
+  VOID
+}
+
+// Journal Entry database foundation (Phase 4A-1). Where a journal entry
+// originated (spec section 3) — purely descriptive metadata in this phase;
+// nothing here implements import, bank feed, or AI extraction yet.
+//  - MANUAL: entered directly by a user.
+//  - IMPORT: brought in from a file (CSV/Excel/etc. — not implemented yet).
+//  - AI: produced by AI extraction (not implemented yet).
+//  - BANK: derived from a bank feed/import (not implemented yet).
+//  - OTHER: anything not covered above.
+enum JournalEntrySourceType {
+  MANUAL
+  IMPORT
+  AI
+  BANK
+  OTHER
+}
+
 // ------------------------------
 // Auth / Identity
 // ------------------------------
@@ -156,6 +192,12 @@ model User {
   updatedAt    DateTime   @updatedAt
 
   memberships Membership[]
+
+  // Journal entries (Phase 4A-1) this user created. No onDelete cascade —
+  // a journal entry must not disappear (or silently orphan) if the user
+  // who created it is later removed; application code decides how
+  // createdById is displayed (see JournalEntry.createdBy comment below).
+  journalEntriesCreated JournalEntry[]
 
   @@map("users")
 }
@@ -244,6 +286,7 @@ model Company {
   accounts          Account[]
   taxCodes          TaxCode[]
   accountMappings   AccountMapping[]
+  journalEntries    JournalEntry[]
 
   @@index([organizationId])
   @@index([countryConfigurationId])
@@ -311,6 +354,11 @@ model Account {
   // relation doesn't need an onDelete action — nothing here cascades.
   accountMappings AccountMapping[]
 
+  // Journal entry lines (Phase 4A-1) that post to this account. An account
+  // is never deleted (isActive above), so this relation doesn't need an
+  // onDelete action either — nothing here cascades.
+  journalEntryLines JournalEntryLine[]
+
   // Account code must be unique within a company, but the same code (e.g.
   // "1000") is allowed to repeat across different companies.
   @@unique([companyId, code])
@@ -340,6 +388,12 @@ model FiscalYear {
 
   company           Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
   accountingPeriods AccountingPeriod[]
+
+  // Journal entries (Phase 4A-1) posted within this fiscal year. No
+  // onDelete cascade here — a fiscal year that already has journal entries
+  // shouldn't be deletable out from under them (application code, not this
+  // phase, decides how that's enforced).
+  journalEntries JournalEntry[]
 
   // A company shouldn't have two fiscal years with the same name (e.g. two
   // "FY2026"s). Overlap-by-date-range is a separate, non-unique-constraint
@@ -371,6 +425,10 @@ model AccountingPeriod {
 
   company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
   fiscalYear FiscalYear @relation(fields: [fiscalYearId], references: [id], onDelete: Cascade)
+
+  // Journal entries (Phase 4A-1) posted within this period. No onDelete
+  // cascade — same rationale as FiscalYear.journalEntries above.
+  journalEntries JournalEntry[]
 
   // Period numbers must be unique within a fiscal year (e.g. only one
   // "Period 1" per fiscal year).
@@ -559,4 +617,118 @@ model AccountMapping {
   @@index([accountId])
   @@index([taxCodeId])
   @@map("account_mappings")
+}
+
+// ------------------------------
+// Journal Entries (Phase 4A-1 — database foundation only, no UI, no
+// automatic posting/numbering/import/AI yet)
+// ------------------------------
+
+// The header record for a double-entry journal entry belonging to a
+// Company. This phase only establishes the model, its relationships, and
+// its basic status/balance/date invariants (spec sections 1–13) — it does
+// not implement the entry UI, automatic entry numbering, file
+// upload/import, OCR, AI extraction, bank import, general ledger, or
+// financial reports (spec section 17). Reusable balance/date validation
+// (src/accounting/journal-entries.ts) is meant to be used as-is by the
+// Phase 4A-3 UI rather than reimplemented there.
+model JournalEntry {
+  id                 String                 @id @default(cuid())
+  companyId          String
+  fiscalYearId       String
+  accountingPeriodId String
+
+  // Caller-supplied for now (spec section 10: "do not create a
+  // complicated automatic numbering system yet"). Enforced unique within
+  // a company by the constraint below; src/accounting/journal-entries.ts
+  // is the single place a future auto-numbering scheme would plug in.
+  entryNumber String
+
+  entryDate DateTime
+
+  // Free-text metadata (spec section 11), meant to become searchable /
+  // filterable once a real Journal Entry list UI exists.
+  reference   String?
+  description String?
+  label       String?
+
+  status JournalEntryStatus @default(DRAFT)
+
+  // Where this entry came from — see the JournalEntrySourceType enum
+  // comment. Purely descriptive in this phase.
+  sourceType JournalEntrySourceType @default(MANUAL)
+
+  // The user who created this entry (spec section 12). Deliberately not
+  // onDelete: Cascade / SetNull — a journal entry's audit trail shouldn't
+  // silently lose its author, and users in this system are suspended
+  // (UserStatus), not hard-deleted. Application code should select only
+  // { id, name } (never passwordHash/email) when exposing this relation,
+  // per spec section 12 ("do not expose sensitive user information
+  // unnecessarily").
+  createdById String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company          Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fiscalYear       FiscalYear       @relation(fields: [fiscalYearId], references: [id])
+  accountingPeriod AccountingPeriod @relation(fields: [accountingPeriodId], references: [id])
+  createdBy        User             @relation(fields: [createdById], references: [id])
+
+  lines JournalEntryLine[]
+
+  // Entry number must be unique within a company (spec section 10), but
+  // the same number (e.g. "JE-0001") is allowed to repeat across
+  // different companies — same pattern as Account.code / TaxCode.code.
+  @@unique([companyId, entryNumber])
+  @@index([companyId])
+  @@index([companyId, entryDate])
+  @@index([companyId, status])
+  @@index([accountingPeriodId])
+  @@index([fiscalYearId])
+  @@index([createdAt])
+  @@map("journal_entries")
+}
+
+// A single debit or credit line within a JournalEntry, posting to one
+// chart-of-accounts Account. This phase stores the line shape and its
+// basic invariants (non-negative amounts, same-company account) only —
+// nothing yet posts these amounts to a ledger balance (spec section 17,
+// "Do NOT build General Ledger").
+model JournalEntryLine {
+  id             String @id @default(cuid())
+  journalEntryId String
+  accountId      String
+
+  description String?
+  reference   String?
+
+  // Precise fixed-point decimal, never floating-point (spec section 8).
+  // Scale of 4 accommodates currencies/rates with sub-cent precision;
+  // application code (src/accounting/journal-entries.ts) enforces >= 0
+  // for both fields — negative amounts are represented by using the
+  // opposite column, not a negative number (spec section 8).
+  debit  Decimal @db.Decimal(19, 4)
+  credit Decimal @db.Decimal(19, 4)
+
+  // Explicit display/entry order within the parent JournalEntry (a future
+  // UI concern — Phase 4A-3 — but the column belongs here now so line
+  // order survives round-trips before that UI exists).
+  lineNumber Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  // Deliberately no onDelete override — an Account is never hard-deleted
+  // (Account.isActive), so this never needs to cascade or null out; the
+  // account referenced by a line must always belong to the same company
+  // as the parent JournalEntry, enforced in application code (spec
+  // section 5) since Prisma can't express a cross-row "same companyId as
+  // my parent" constraint declaratively.
+  account Account @relation(fields: [accountId], references: [id])
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@map("journal_entry_lines")
 }

@@ -72,3 +72,23 @@ export async function getOwnedAccount(
     },
   });
 }
+
+// A journal entry (Phase 4A-1) scoped to a specific company, which itself
+// must belong to the caller's organization. Same rule as everywhere else
+// in this file: a bare journalEntryId is never trusted on its own. Lines
+// are included since almost every caller needs them (balance checks,
+// display) and it avoids a second round trip.
+export async function getOwnedJournalEntry(
+  organizationId: string,
+  companyId: string,
+  journalEntryId: string
+) {
+  return prisma.journalEntry.findFirst({
+    where: {
+      id: journalEntryId,
+      companyId,
+      company: { organizationId },
+    },
+    include: { lines: true },
+  });
+}

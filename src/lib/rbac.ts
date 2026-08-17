@@ -56,6 +56,14 @@ export function canManageAccountMappings(role: Role) {
   return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT";
 }
 
+// Journal entries (Phase 4A-1). Same coarse capability set as company
+// management / fiscal years / accounts / tax codes / account mapping for
+// now — REVIEWER stays read-only. Revisit once posting/approval workflows
+// need a finer split (e.g. "can create a draft" vs. "can post it").
+export function canManageJournalEntries(role: Role) {
+  return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT";
+}
+
 export function canManageMembers(role: Role) {
   return role === "ADMIN";
 }
