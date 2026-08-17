@@ -216,7 +216,7 @@ async function recordHumanDecision(
         humanNotes: values.notes?.trim() || null,
       },
     });
-    await tx.aiReviewAudit.create({
+    await tx.aIReviewAudit.create({
       data: {
         candidateId,
         suggestionId: latestSuggestion.id,
