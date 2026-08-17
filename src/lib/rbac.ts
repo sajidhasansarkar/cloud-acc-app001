@@ -49,6 +49,13 @@ export function canManageTaxCodes(role: Role) {
   return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT";
 }
 
+// Account mapping (Phase 3C-1). Same coarse capability set as company
+// management / fiscal years / accounts / tax codes for now — REVIEWER
+// stays read-only.
+export function canManageAccountMappings(role: Role) {
+  return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT";
+}
+
 export function canManageMembers(role: Role) {
   return role === "ADMIN";
 }

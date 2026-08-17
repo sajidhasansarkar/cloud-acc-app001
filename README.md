@@ -118,11 +118,14 @@ src/
                        accounting/README.md)
   tax/                 Tax code business logic (backend only, Phase 3B-1 —
                        see tax/README.md)
+  mapping/             Account mapping business logic (backend only, Phase
+                       3C-1 — see mapping/README.md)
   ai/ banking/ reports/ integrations/
                        Empty placeholders for future-phase modules
 prisma/
   schema.prisma        User, Organization, Membership, Company, Country,
-                       FiscalYear, AccountingPeriod, Account, TaxCode
+                       FiscalYear, AccountingPeriod, Account, TaxCode,
+                       AccountMapping
   seed.ts              Seeds countries + first admin user/org
 ```
 
@@ -166,4 +169,20 @@ calculation-adjacent logic is a data-integrity check that a code's rate is
 0 for ZERO_RATE/EXEMPT/OUT_OF_SCOPE and greater than 0 for STANDARD_RATE —
 no actual tax calculation, filing, returns, AI tax decisions, account
 mapping, or journal entries. No rates are seeded or hard-coded anywhere.
+Backend only — no UI yet.
+
+## Phase 3C-1 scope
+
+Added the `AccountMapping` model (a reusable rule structure for eventually
+routing a transaction — bank line, sales transaction, etc. — to a chart-of-
+accounts `Account` and/or a `TaxCode`) and backend logic in
+`src/mapping/account-mappings.ts`: create/update/list/get, company
+isolation for both the mapping and whichever `Account` / `TaxCode` it
+references (User → Organization → Company → AccountMapping, same pattern
+as `src/accounting/access.ts` / `src/tax/access.ts`; cross-company
+references are rejected), and activate/deactivate (mappings are never
+deleted). `MappingSourceType`
+(BANK_DESCRIPTION/VENDOR/CUSTOMER/CATEGORY/TRANSACTION_TYPE) is prepared as
+an enum. No automatic matching engine, transaction categorization, AI,
+journal entries, bank import, or reconciliation — those still don't exist.
 Backend only — no UI yet.

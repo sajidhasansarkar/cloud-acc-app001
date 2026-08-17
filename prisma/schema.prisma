@@ -1,5 +1,5 @@
 // Accounting Platform — Phase 1 + Phase 2A + Phase 2B-1 + Phase 3A-1 + Phase
-// 3B-1 schema
+// 3B-1 + Phase 3C-1 schema
 // Phase 1: auth, organizations, memberships, companies (foundation).
 // Phase 2A: full company management + reusable country configuration.
 // Phase 2B-1: fiscal year / accounting period foundation (backend only —
@@ -10,6 +10,11 @@
 // the TaxCode model below. No tax calculation, filing, returns, AI tax
 // decisions, account mapping, or journal entries yet — those belong to
 // later phases.
+// Phase 3C-1: account mapping database foundation (backend only — no UI,
+// no automatic matching yet). See the AccountMapping model below. This is
+// only the reusable rule structure (source → Account / TaxCode) — nothing
+// reads or applies these mappings to a real transaction yet, since
+// transactions / bank import don't exist yet.
 // Do not add journal entries/transactions/ledger/AI models here yet —
 // those belong to later phases.
 
@@ -117,6 +122,23 @@ enum CalculationMethod {
   OUT_OF_SCOPE
 }
 
+// Account Mapping database foundation (Phase 3C-1). What kind of source
+// value an AccountMapping rule matches against (spec section 3). Purely a
+// classification of the rule's input — no automatic matching engine reads
+// this yet in this phase.
+//  - BANK_DESCRIPTION: raw/normalized bank statement line text.
+//  - VENDOR: a vendor/supplier name.
+//  - CUSTOMER: a customer name.
+//  - CATEGORY: a category label (e.g. from an import source).
+//  - TRANSACTION_TYPE: a transaction's type/kind.
+enum MappingSourceType {
+  BANK_DESCRIPTION
+  VENDOR
+  CUSTOMER
+  CATEGORY
+  TRANSACTION_TYPE
+}
+
 // ------------------------------
 // Auth / Identity
 // ------------------------------
@@ -221,6 +243,7 @@ model Company {
   accountingPeriods AccountingPeriod[]
   accounts          Account[]
   taxCodes          TaxCode[]
+  accountMappings   AccountMapping[]
 
   @@index([organizationId])
   @@index([countryConfigurationId])
@@ -282,6 +305,11 @@ model Account {
   updatedAt DateTime @updatedAt
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Mappings (Phase 3C-1) that route a matched source value to this
+  // account. An account is never deleted (isActive above), so this
+  // relation doesn't need an onDelete action — nothing here cascades.
+  accountMappings AccountMapping[]
 
   // Account code must be unique within a company, but the same code (e.g.
   // "1000") is allowed to repeat across different companies.
@@ -446,6 +474,11 @@ model TaxCode {
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
+  // Mappings (Phase 3C-1) that route a matched source value to this tax
+  // code. A tax code is never deleted (isActive above), so this relation
+  // doesn't need an onDelete action — nothing here cascades.
+  accountMappings AccountMapping[]
+
   // Tax code must be unique within a company, but the same code (e.g.
   // "STD") is allowed to repeat across different companies — same pattern
   // as Account.code.
@@ -454,4 +487,76 @@ model TaxCode {
   @@index([companyId, countryCode])
   @@index([companyId, taxType])
   @@map("tax_codes")
+}
+
+// ------------------------------
+// Account Mapping (Phase 3C-1 — database foundation only, no UI, no
+// automatic matching yet)
+// ------------------------------
+
+// A reusable rule that will eventually let a later phase auto-route a real
+// transaction (bank line, sales transaction, etc. — none of which exist
+// yet) to a chart-of-accounts Account and/or a TaxCode, based on a source
+// value such as a bank description, vendor name, customer name, category,
+// or transaction type (see MappingSourceType). This phase only stores the
+// rule shape and its constraints (spec section 3: "Do not implement
+// automatic matching yet") — nothing evaluates sourceValue against a real
+// transaction or applies accountId/taxCodeId to anything.
+model AccountMapping {
+  id        String @id @default(cuid())
+  companyId String
+
+  // A human-readable label for the rule (e.g. "Starbucks → Meals &
+  // Entertainment"), shown in a future mapping-management UI.
+  name String
+
+  // What kind of value sourceValue represents — see the MappingSourceType
+  // enum comment above.
+  sourceType MappingSourceType
+
+  // The raw value this rule matches against (e.g. "STARBUCKS", a vendor
+  // name, a category label). Free-form text: the shape of this value
+  // differs by sourceType and by import source, so — like Account.subtype
+  // — a fixed enum/format would be too rigid here. No matching logic
+  // (exact/fuzzy/regex) is implemented against it in this phase.
+  sourceValue String
+
+  // Where a matched transaction should be routed. At least one of
+  // accountId / taxCodeId must be set (enforced both by the app layer in
+  // src/mapping/account-mappings.ts and by the DB check constraint added
+  // in this phase's migration) — a mapping that routes to neither an
+  // account nor a tax code does nothing. Both may be set at once (e.g. an
+  // expense account and its associated tax code for the same source).
+  accountId String?
+  taxCodeId String?
+
+  // Lets multiple rules exist for overlapping/ambiguous source values
+  // (e.g. a specific vendor rule vs. a broader category fallback) with a
+  // defined resolution order for whichever later phase implements the
+  // actual matching engine. Higher runs first; plain integer rather than
+  // an enum since "how many priority tiers" is a product decision for
+  // that later phase, not this one. Not enforced/interpreted by anything
+  // in this phase.
+  priority Int @default(0)
+
+  // Inactive mappings are hidden from normal selection and are never
+  // deleted, same rationale as Account.isActive / TaxCode.isActive —
+  // historical use of a rule (once a matching engine exists) must stay
+  // auditable.
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  account Account? @relation(fields: [accountId], references: [id])
+  taxCode TaxCode? @relation(fields: [taxCodeId], references: [id])
+
+  @@index([companyId])
+  @@index([companyId, sourceType])
+  @@index([companyId, sourceType, sourceValue])
+  @@index([companyId, isActive])
+  @@index([accountId])
+  @@index([taxCodeId])
+  @@map("account_mappings")
 }

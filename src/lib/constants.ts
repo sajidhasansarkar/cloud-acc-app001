@@ -116,6 +116,41 @@ export const TAX_CODE_STATUS_LABELS: Record<TaxCodeStatus, string> = {
 // reads intent rather than reaching into the company-settings constant.
 export const TAX_COUNTRIES = INITIAL_COUNTRIES;
 
+// ------------------------------
+// Account Mapping (Phase 3C-2)
+// ------------------------------
+
+// Mirrors the MappingSourceType enum in prisma/schema.prisma — same
+// reasoning as ACCOUNT_TYPES / TAX_TYPES above: a single ordered list
+// drives every <Select> in the UI instead of importing the Prisma enum
+// into client components.
+export const MAPPING_SOURCE_TYPES = [
+  "BANK_DESCRIPTION",
+  "VENDOR",
+  "CUSTOMER",
+  "CATEGORY",
+  "TRANSACTION_TYPE",
+] as const;
+
+export const MAPPING_SOURCE_TYPE_LABELS: Record<(typeof MAPPING_SOURCE_TYPES)[number], string> = {
+  BANK_DESCRIPTION: "Bank Description",
+  VENDOR: "Vendor",
+  CUSTOMER: "Customer",
+  CATEGORY: "Category",
+  TRANSACTION_TYPE: "Transaction Type",
+};
+
+// AccountMapping.isActive is a plain boolean at the data layer, same
+// pattern as Account.isActive / TaxCode.isActive — the UI presents it as
+// a two-value status.
+export const MAPPING_STATUSES = ["ACTIVE", "INACTIVE"] as const;
+export type MappingStatus = (typeof MAPPING_STATUSES)[number];
+
+export const MAPPING_STATUS_LABELS: Record<MappingStatus, string> = {
+  ACTIVE: "Active",
+  INACTIVE: "Inactive",
+};
+
 export const COMPANY_SORT_OPTIONS = [
   { value: "createdAt_desc", label: "Newest first" },
   { value: "createdAt_asc", label: "Oldest first" },

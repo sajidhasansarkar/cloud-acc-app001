@@ -180,6 +180,42 @@ export type UpdateTaxCodeInput = z.infer<typeof updateTaxCodeSchema>;
 export type TaxCodeFieldErrors = Partial<Record<keyof CreateTaxCodeInput, string>>;
 
 // ------------------------------
+// Account Mapping (Phase 3C-1)
+// ------------------------------
+
+export const mappingSourceTypeSchema = z.enum([
+  "BANK_DESCRIPTION",
+  "VENDOR",
+  "CUSTOMER",
+  "CATEGORY",
+  "TRANSACTION_TYPE",
+]);
+export type MappingSourceTypeInput = z.infer<typeof mappingSourceTypeSchema>;
+
+// Same "" -> undefined treatment as optionalId above (accountId / taxCodeId
+// come from optional pickers in a future form) — a mapping needs at least
+// one of the two, which is checked in src/mapping/account-mappings.ts
+// since it depends on both fields together, not something zod alone can
+// express here.
+const accountMappingBaseSchema = {
+  companyId: z.string().trim().min(1, "companyId is required"),
+  name: z.string().trim().min(1, "Mapping name is required").max(120),
+  sourceType: mappingSourceTypeSchema,
+  sourceValue: z.string().trim().min(1, "Source value is required").max(200),
+  accountId: optionalId,
+  taxCodeId: optionalId,
+  priority: z.coerce.number().int().default(0),
+};
+
+export const createAccountMappingSchema = z.object(accountMappingBaseSchema);
+export type CreateAccountMappingInput = z.infer<typeof createAccountMappingSchema>;
+
+export const updateAccountMappingSchema = z.object(accountMappingBaseSchema);
+export type UpdateAccountMappingInput = z.infer<typeof updateAccountMappingSchema>;
+
+export type AccountMappingFieldErrors = Partial<Record<keyof CreateAccountMappingInput, string>>;
+
+// ------------------------------
 // Company Settings — Accounting tab (Phase 2B-2B-2)
 // ------------------------------
 
