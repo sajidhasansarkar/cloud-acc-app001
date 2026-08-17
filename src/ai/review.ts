@@ -202,7 +202,7 @@ async function recordHumanDecision(
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.aiReviewRecord.update({
+    await tx.aIReviewRecord.update({
       where: { candidateId },
       data: {
         status: "REVIEWED",

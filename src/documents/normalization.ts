@@ -218,7 +218,7 @@ export async function normalizeDocument(organizationId: string, companyId: strin
       }
       const stale = existing.filter((e) => !sourceKeys.has(e.sourceRowReference) && !e.manuallyCorrected).map((e) => e.id);
       if (stale.length) await tx.normalizedTransactionCandidate.deleteMany({ where: { id: { in: stale } } });
-      await tx.aiReviewRecord.updateMany({ where: { candidate: { documentId: document.id } }, data: { status: "NOT_REVIEWED", contextVersion: "v1" } });
+      await tx.aIReviewRecord.updateMany({ where: { candidate: { documentId: document.id } }, data: { status: "NOT_REVIEWED", contextVersion: "v1" } });
     });
     return { documentId: document.id, candidateCount: candidates.length, ignoredRowCount: Math.max(0, sourceRowCount - candidates.length), duplicateCount: candidates.filter((c) => c.possibleDuplicate).length, warningsCount: candidates.reduce((n, c) => n + c.warnings.length, 0) };
   } catch (error) {
