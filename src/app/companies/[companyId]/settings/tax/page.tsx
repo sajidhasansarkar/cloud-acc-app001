@@ -15,7 +15,7 @@ import { TaxCodeFormDialog } from "@/components/tax/tax-code-form-dialog";
 
 export const metadata = { title: "Tax — Ledger" };
 
-const COUNTRY_CODES = TAX_COUNTRIES.map((c) => c.countryCode);
+const COUNTRY_CODES: readonly string[] = TAX_COUNTRIES.map((c) => c.countryCode);
 
 // Phase 3B-2: Tax Code management UI, built on Phase 3B-1's backend
 // (src/tax/tax-codes.ts, src/actions/tax-codes.ts). All read/write access
@@ -40,7 +40,7 @@ export default async function CompanyTaxSettingsPage({
   params: { companyId: string };
   searchParams: { q?: string; taxType?: string; country?: string; status?: string };
 }) {
-  const { role, organization } = await requireActiveOrganization();
+  const { role } = await requireActiveOrganization();
 
   // requireOwnedCompany re-derives Organization -> Company ownership from
   // the session; companyId from the URL is never trusted on its own.
