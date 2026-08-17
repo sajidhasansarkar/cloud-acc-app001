@@ -129,3 +129,22 @@ Added: `FiscalYear` and `AccountingPeriod` models, fiscal year creation with
 overlap validation, a MONTHLY/QUARTERLY accounting period generator,
 current-fiscal-year/current-period detection, and OPEN/CLOSED/LOCKED status
 transitions for both. Backend only — no UI (that's Phase 2B-2).
+
+## Phase 3A-1 scope
+
+Added the `Account` model (chart of accounts) and backend logic in
+`src/accounting/accounts.ts`: create/update/list/get, hierarchical
+parent-account support (same-company only, cycle-safe), unique code per
+company, and activate/deactivate (accounts are never deleted). Backend
+only — no UI (that's Phase 3A-2).
+
+## Phase 3A-2 scope
+
+Added the basic Chart of Accounts UI at
+`/companies/[companyId]/chart-of-accounts`: an account table (Code, Name,
+Type, Subtype, Parent Account, Status, Actions), an Add Account dialog, an
+Edit Account dialog (account code locked after creation), a View dialog,
+and an Activate/Deactivate action — all built on the existing design
+system (Table, Dialog, Select, Badge, Toast, EmptyState) and the Phase
+3A-1 backend/actions layer. No tax, account mapping, journal entries,
+transactions, general ledger, reports, or AI — still out of scope.

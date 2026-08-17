@@ -9,7 +9,6 @@ import {
   CalendarRange,
   ArrowLeftRight,
   BookText,
-  ListTree,
   BookOpenCheck,
   Scale,
   FileBarChart,
@@ -40,7 +39,6 @@ function periodStatusBadgeVariant(status: string) {
 const FUTURE_MODULES = [
   { label: "Transactions", segment: "transactions", icon: ArrowLeftRight },
   { label: "Journal Entries", segment: "journal-entries", icon: BookText },
-  { label: "Chart of Accounts", segment: "chart-of-accounts", icon: ListTree },
   { label: "General Ledger", segment: "general-ledger", icon: BookOpenCheck },
   { label: "Trial Balance", segment: "trial-balance", icon: Scale },
   { label: "Reports", segment: "reports", icon: FileBarChart },

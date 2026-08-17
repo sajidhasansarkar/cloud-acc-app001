@@ -24,6 +24,34 @@ export const COMPANY_STATUS_LABELS: Record<(typeof ALL_COMPANY_STATUSES)[number]
   ARCHIVED: "Archived",
 };
 
+// ------------------------------
+// Chart of Accounts (Phase 3A-2)
+// ------------------------------
+
+// Mirrors the AccountType enum in prisma/schema.prisma — kept here (rather
+// than importing the Prisma enum directly into every client component) so
+// UI code has a single, ordered list to drive <Select> options with.
+export const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"] as const;
+
+export const ACCOUNT_TYPE_LABELS: Record<(typeof ACCOUNT_TYPES)[number], string> = {
+  ASSET: "Asset",
+  LIABILITY: "Liability",
+  EQUITY: "Equity",
+  REVENUE: "Revenue",
+  EXPENSE: "Expense",
+};
+
+// Account.isActive is a plain boolean (see the schema comment on Account),
+// but the UI presents it as a two-value status, matching the spec's
+// ACTIVE / INACTIVE vocabulary.
+export const ACCOUNT_STATUSES = ["ACTIVE", "INACTIVE"] as const;
+export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
+
+export const ACCOUNT_STATUS_LABELS: Record<AccountStatus, string> = {
+  ACTIVE: "Active",
+  INACTIVE: "Inactive",
+};
+
 export const COMPANY_SORT_OPTIONS = [
   { value: "createdAt_desc", label: "Newest first" },
   { value: "createdAt_asc", label: "Oldest first" },
