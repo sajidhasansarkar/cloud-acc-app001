@@ -125,9 +125,16 @@ export function isEntryBalanced(lines: { debit: Prisma.Decimal.Value; credit: Pr
  *  - debit / credit must each be >= 0 (spec section 8 — no negative
  *    amounts; a "negative" amount is represented by using the opposite
  *    column, not a negative number).
- *  - a line can't be zero on both sides (it wouldn't do anything), and
- *    can't have both a debit and a credit at once (a line is one side of
- *    one entry — standard double-entry shape).
+ *  - can't have both a debit and a credit at once (a line is one side of
+ *    one entry — standard double-entry shape; spec section 9).
+ *
+ * Deliberately does NOT reject a line that is zero on both sides. Every
+ * entry in this system is currently created/edited as a DRAFT, and spec
+ * section 13 (Phase 4A-3A) requires drafts to be saveable with "one
+ * incomplete line" / "multiple incomplete lines" — an incomplete line is
+ * exactly debit=0 and credit=0 (spec section 9). Rejecting that here would
+ * make saving an incomplete draft impossible. Whether an entry's lines are
+ * complete/balanced enough to POST is a separate concern for Phase 4A-3B.
  */
 function validateLineAmounts(line: JournalEntryLineInput): { ok: true } | { ok: false; error: string } {
   const debit = new Prisma.Decimal(line.debit);
@@ -136,11 +143,36 @@ function validateLineAmounts(line: JournalEntryLineInput): { ok: true } | { ok: 
   if (debit.isNegative() || credit.isNegative()) {
     return { ok: false, error: "Debit and credit amounts cannot be negative." };
   }
-  if (debit.isZero() && credit.isZero()) {
-    return { ok: false, error: "Each line must have a debit or a credit amount greater than zero." };
-  }
   if (!debit.isZero() && !credit.isZero()) {
     return { ok: false, error: "A single line cannot have both a debit and a credit amount." };
+  }
+  return { ok: true };
+}
+
+/**
+ * Shared line-side verification for create and update: every referenced
+ * account must exist and belong to `companyId` (spec section 5), and every
+ * line's amounts must pass validateLineAmounts above. Deduplicates account
+ * ids so entries with many lines against the same account only do one
+ * ownership lookup per account.
+ */
+async function verifyLines(
+  organizationId: string,
+  companyId: string,
+  lines: JournalEntryLineInput[]
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const uniqueAccountIds = [...new Set(lines.map((l) => l.accountId))];
+  for (const accountId of uniqueAccountIds) {
+    const account = await getOwnedAccount(organizationId, companyId, accountId);
+    if (!account) {
+      return { ok: false, error: "One or more lines reference an account outside this company." };
+    }
+  }
+  for (const line of lines) {
+    const lineCheck = validateLineAmounts(line);
+    if (!lineCheck.ok) {
+      return lineCheck;
+    }
   }
   return { ok: true };
 }
@@ -218,22 +250,11 @@ export async function createJournalEntry(
   // through the same account-ownership and amount checks below.
 
   // Verify every referenced account exists and belongs to this company
-  // (spec section 5) before creating anything. Deduplicate ids so we
-  // don't repeat the same ownership lookup for entries with many lines
-  // against the same account.
-  const uniqueAccountIds = [...new Set(input.lines.map((l) => l.accountId))];
-  for (const accountId of uniqueAccountIds) {
-    const account = await getOwnedAccount(organizationId, company.id, accountId);
-    if (!account) {
-      return { ok: false, error: "One or more lines reference an account outside this company." };
-    }
-  }
-
-  for (const line of input.lines) {
-    const lineCheck = validateLineAmounts(line);
-    if (!lineCheck.ok) {
-      return { ok: false, error: lineCheck.error };
-    }
+  // (spec section 5), and every line's amounts are valid (spec section 8),
+  // before creating anything.
+  const linesCheck = await verifyLines(organizationId, company.id, input.lines);
+  if (!linesCheck.ok) {
+    return { ok: false, error: linesCheck.error };
   }
 
   const entry = await prisma.journalEntry.create({
@@ -382,6 +403,108 @@ export async function updateJournalEntryHeader(
       sourceType: input.sourceType ?? existing.sourceType,
     },
     include: { lines: true },
+  });
+
+  return { ok: true, entry };
+}
+
+// ------------------------------
+// Update (Phase 4A-3A — header + journal lines)
+// ------------------------------
+
+export type UpdateJournalEntryWithLinesInput = UpdateJournalEntryHeaderInput & {
+  lines: JournalEntryLineInput[];
+};
+
+/**
+ * Updates a DRAFT journal entry's header fields (reusing the same checks
+ * as updateJournalEntryHeader above) and replaces its journal lines in the
+ * same transaction (spec section 15 — Edit Draft: add/remove lines, edit
+ * account/description/reference/debit/credit).
+ *
+ * Only DRAFT entries may be edited (spec section 15). Lines are replaced
+ * wholesale (delete all, recreate in order) rather than diffed line by
+ * line — simpler and correct here because journal lines have no identity
+ * meaningful outside their parent entry, and lineNumber is always
+ * recomputed from the submitted order anyway.
+ *
+ * Does not require the lines to be balanced or complete — same reasoning
+ * as createJournalEntry (spec section 13): a DRAFT can be saved with no
+ * lines, incomplete lines, or unbalanced lines. Balance validation is
+ * Phase 4A-3B.
+ */
+export async function updateJournalEntry(
+  organizationId: string,
+  companyId: string,
+  journalEntryId: string,
+  input: UpdateJournalEntryWithLinesInput
+): Promise<JournalEntryResult> {
+  const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
+  if (!existing) {
+    return { ok: false, error: "Journal entry not found." };
+  }
+  if (existing.status !== "DRAFT") {
+    return { ok: false, error: `A ${existing.status} journal entry cannot be edited.` };
+  }
+
+  const fiscalYear = await getOwnedFiscalYear(organizationId, companyId, input.fiscalYearId);
+  if (!fiscalYear) {
+    return { ok: false, error: "Fiscal year not found for this company." };
+  }
+
+  const accountingPeriod = await getOwnedAccountingPeriod(
+    organizationId,
+    companyId,
+    input.accountingPeriodId
+  );
+  if (!accountingPeriod) {
+    return { ok: false, error: "Accounting period not found for this company." };
+  }
+
+  const dateCheck = validateEntryDateInPeriod(fiscalYear, accountingPeriod, input.entryDate);
+  if (!dateCheck.ok) {
+    return { ok: false, error: dateCheck.error };
+  }
+
+  const linesCheck = await verifyLines(organizationId, companyId, input.lines);
+  if (!linesCheck.ok) {
+    return { ok: false, error: linesCheck.error };
+  }
+
+  const entry = await prisma.$transaction(async (tx) => {
+    await tx.journalEntry.update({
+      where: { id: existing.id },
+      data: {
+        fiscalYearId: fiscalYear.id,
+        accountingPeriodId: accountingPeriod.id,
+        entryDate: input.entryDate,
+        reference: input.reference?.trim() || null,
+        description: input.description?.trim() || null,
+        label: input.label?.trim() || null,
+        sourceType: input.sourceType ?? existing.sourceType,
+      },
+    });
+
+    await tx.journalEntryLine.deleteMany({ where: { journalEntryId: existing.id } });
+
+    if (input.lines.length > 0) {
+      await tx.journalEntryLine.createMany({
+        data: input.lines.map((line, index) => ({
+          journalEntryId: existing.id,
+          accountId: line.accountId,
+          description: line.description?.trim() || null,
+          reference: line.reference?.trim() || null,
+          debit: line.debit,
+          credit: line.credit,
+          lineNumber: index + 1,
+        })),
+      });
+    }
+
+    return tx.journalEntry.findUniqueOrThrow({
+      where: { id: existing.id },
+      include: { lines: true },
+    });
   });
 
   return { ok: true, entry };

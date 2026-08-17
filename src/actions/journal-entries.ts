@@ -3,7 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { requireActiveOrganization } from "@/lib/session";
 import { canManageJournalEntries } from "@/lib/rbac";
-import { createJournalEntrySchema, updateJournalEntryHeaderSchema } from "@/lib/validations";
+import {
+  createJournalEntrySchema,
+  updateJournalEntryHeaderSchema,
+  updateJournalEntryWithLinesSchema,
+} from "@/lib/validations";
 import {
   createJournalEntry,
   getJournalEntry,
@@ -12,6 +16,7 @@ import {
   voidJournalEntry,
   deleteJournalEntry,
   updateJournalEntryHeader,
+  updateJournalEntry,
   type JournalEntryResult,
 } from "@/accounting/journal-entries";
 import type { JournalEntry, JournalEntryLine, JournalEntrySourceType } from "@prisma/client";
@@ -24,12 +29,14 @@ import type { JournalEntry, JournalEntryLine, JournalEntrySourceType } from "@pr
  * rather than trusting this layer alone. Same shape as
  * src/actions/account-mappings.ts / src/actions/tax-codes.ts.
  *
- * createJournalEntryAction is called by the basic New Journal Entry form
- * (Phase 4A-2) with an empty `lines` array — the complete Debit/Credit
- * line entry UI and balance validation are Phase 4A-3.
- * updateJournalEntryHeaderAction is the Phase 4A-2 basic Edit screen's
- * only write path (header fields only, DRAFT entries only). Posting/void
- * still have no UI wiring beyond the status actions below.
+ * createJournalEntryAction is called by the New Journal Entry form,
+ * including its journal lines (Phase 4A-3A — spec sections 1-13).
+ * updateJournalEntryAction is the Edit Draft screen's write path: header
+ * fields + journal lines together (Phase 4A-3A — spec section 15), DRAFT
+ * entries only. updateJournalEntryHeaderAction (header fields only, no
+ * lines) is kept from Phase 4A-2 for any caller that only needs to touch
+ * header fields. Posting/void still have no UI wiring beyond the status
+ * actions below.
  */
 
 export async function createJournalEntryAction(input: {
@@ -119,6 +126,54 @@ export async function updateJournalEntryHeaderAction(
     journalEntryId,
     parsed.data
   );
+
+  if (result.ok) {
+    revalidatePath(`/companies/${parsed.data.companyId}/journal-entries`);
+    revalidatePath(`/companies/${parsed.data.companyId}/journal-entries/${journalEntryId}`);
+  }
+
+  return result;
+}
+
+/**
+ * Full Edit Draft write path (Phase 4A-3A, spec section 15): header
+ * fields + journal lines (account, description, reference, debit,
+ * credit) together, in one server round trip. Only DRAFT entries can be
+ * edited; updateJournalEntry itself re-checks this rather than trusting
+ * the UI to only ever call it from the edit screen.
+ */
+export async function updateJournalEntryAction(
+  journalEntryId: string,
+  input: {
+    companyId: string;
+    fiscalYearId: string;
+    accountingPeriodId: string;
+    entryDate: Date | string;
+    reference?: string;
+    description?: string;
+    label?: string;
+    sourceType?: JournalEntrySourceType;
+    lines: {
+      accountId: string;
+      description?: string;
+      reference?: string;
+      debit: string | number;
+      credit: string | number;
+    }[];
+  }
+): Promise<JournalEntryResult> {
+  const { role, organization } = await requireActiveOrganization();
+
+  if (!canManageJournalEntries(role)) {
+    return { ok: false, error: "You don't have permission to manage journal entries." };
+  }
+
+  const parsed = updateJournalEntryWithLinesSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  const result = await updateJournalEntry(organization.id, parsed.data.companyId, journalEntryId, parsed.data);
 
   if (result.ok) {
     revalidatePath(`/companies/${parsed.data.companyId}/journal-entries`);

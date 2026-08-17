@@ -3,11 +3,12 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, Pencil, ListChecks } from "lucide-react";
 import { requireActiveOrganization } from "@/lib/session";
 import { requireOwnedCompany } from "@/lib/company-guard";
-import { getJournalEntry } from "@/accounting/journal-entries";
+import { getJournalEntry, calculateEntryTotals } from "@/accounting/journal-entries";
 import { canManageJournalEntries } from "@/lib/rbac";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { JournalEntryStatusBadge } from "@/components/journal-entries/journal-entry-status-badge";
 import { JOURNAL_ENTRY_SOURCE_TYPE_LABELS } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
@@ -43,6 +44,11 @@ export default async function JournalEntryDetailPage({
   }
 
   const canManage = canManageJournalEntries(role);
+  // Reuses the same Decimal-based summation the create/update paths use
+  // (spec section 8 — no floating-point math), just to display totals;
+  // this is not the balance validation deferred to a later phase (spec
+  // section 17 — no posting/balance gate is applied here).
+  const { totalDebit, totalCredit } = calculateEntryTotals(entry.lines);
 
   return (
     <div className="space-y-6">
@@ -95,24 +101,54 @@ export default async function JournalEntryDetailPage({
       <Card>
         <CardHeader>
           <CardTitle>Journal Lines</CardTitle>
-          <CardDescription>
-            Debit/credit lines and balance validation are added in a later phase.
-          </CardDescription>
+          <CardDescription>Balance and posting validation are added in a later phase.</CardDescription>
         </CardHeader>
         <CardContent>
           {entry.lines.length === 0 ? (
             <EmptyState icon={ListChecks} title="No journal lines added." />
           ) : (
-            <ul className="divide-y divide-ink-100 text-sm">
-              {entry.lines.map((line) => (
-                <li key={line.id} className="flex items-center justify-between py-2">
-                  <span className="text-ink-700">{line.description || line.accountId}</span>
-                  <span className="font-mono text-xs text-ink-500">
-                    {Number(line.debit) > 0 ? `Dr ${line.debit}` : `Cr ${line.credit}`}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <div className="rounded-lg border border-ink-100">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10">#</TableHead>
+                    <TableHead>Account</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Reference</TableHead>
+                    <TableHead className="text-right">Debit</TableHead>
+                    <TableHead className="text-right">Credit</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {entry.lines.map((line, index) => (
+                    <TableRow key={line.id}>
+                      <TableCell className="text-ink-500">{index + 1}</TableCell>
+                      <TableCell className="text-ink-800">
+                        <span className="font-mono text-xs text-ink-500">{line.account.code}</span>
+                        {" — "}
+                        {line.account.name}
+                      </TableCell>
+                      <TableCell className="text-ink-700">{line.description || "—"}</TableCell>
+                      <TableCell className="text-ink-700">{line.reference || "—"}</TableCell>
+                      <TableCell className="text-right font-mono text-ink-800">
+                        {Number(line.debit) > 0 ? line.debit.toFixed(2) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-ink-800">
+                        {Number(line.credit) > 0 ? line.credit.toFixed(2) : "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <div className="flex items-center justify-end gap-6 border-t border-ink-100 bg-surface-muted px-4 py-2 text-sm">
+                <span className="text-ink-500">
+                  Total Debit: <span className="font-mono text-ink-800">{totalDebit.toFixed(2)}</span>
+                </span>
+                <span className="text-ink-500">
+                  Total Credit: <span className="font-mono text-ink-800">{totalCredit.toFixed(2)}</span>
+                </span>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>

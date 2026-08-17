@@ -10,10 +10,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
-import { createJournalEntryAction, updateJournalEntryHeaderAction } from "@/actions/journal-entries";
+import { createJournalEntryAction, updateJournalEntryAction } from "@/actions/journal-entries";
 import { listAccountingPeriodsAction } from "@/actions/accounting-periods";
 import { JOURNAL_ENTRY_SOURCE_TYPES, JOURNAL_ENTRY_SOURCE_TYPE_LABELS } from "@/lib/constants";
-import type { AccountingPeriod, FiscalYear, JournalEntrySourceType } from "@prisma/client";
+import { JournalLinesEditor, type JournalLineDraft } from "@/components/journal-entries/journal-lines-editor";
+import type { Account, AccountingPeriod, FiscalYear, JournalEntrySourceType } from "@prisma/client";
 
 function toDateInputValue(date: Date | string) {
   const d = typeof date === "string" ? new Date(date) : date;
@@ -41,6 +42,8 @@ export function JournalEntryForm({
   defaultFiscalYearId,
   defaultAccountingPeriodId,
   cancelHref,
+  accounts,
+  initialLines,
 }: {
   mode: "create" | "edit";
   companyId: string;
@@ -55,6 +58,13 @@ export function JournalEntryForm({
   defaultFiscalYearId?: string;
   defaultAccountingPeriodId?: string;
   cancelHref: string;
+  /** This company's Chart of Accounts (spec sections 3-4) — reused as-is
+   * from listAccounts/listAccountsAction, never redefined here. */
+  accounts: Pick<Account, "id" | "code" | "name" | "isActive">[];
+  /** Existing lines when editing a draft (spec section 15), already
+   * converted to string debit/credit so no Decimal/float parsing happens
+   * client-side. Omitted (or empty) for a brand-new entry. */
+  initialLines?: JournalLineDraft[];
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -74,6 +84,7 @@ export function JournalEntryForm({
   const [description, setDescription] = useState(entry?.description ?? "");
   const [label, setLabel] = useState(entry?.label ?? "");
   const [sourceType, setSourceType] = useState<JournalEntrySourceType>(entry?.sourceType ?? "MANUAL");
+  const [lines, setLines] = useState<JournalLineDraft[]>(initialLines ?? []);
   const [error, setError] = useState<string | null>(null);
 
   // Accounting Period options must always belong to the selected Fiscal
@@ -111,10 +122,33 @@ export function JournalEntryForm({
       return;
     }
 
+    // A blank row the user added but never touched (no account, no
+    // amounts, no text) is a UI placeholder, not a real line — drop it
+    // rather than sending it to the server, where accountId is required
+    // (spec section 13 still allows saving genuinely incomplete lines,
+    // e.g. an account picked with debit/credit left at 0; this only
+    // skips rows with nothing entered at all).
+    const linesPayload = lines
+      .filter(
+        (line) =>
+          line.accountId ||
+          line.description.trim() ||
+          line.reference.trim() ||
+          line.debit.trim() ||
+          line.credit.trim()
+      )
+      .map((line) => ({
+        accountId: line.accountId,
+        description: line.description.trim() || undefined,
+        reference: line.reference.trim() || undefined,
+        debit: line.debit.trim() || "0",
+        credit: line.credit.trim() || "0",
+      }));
+
     startTransition(async () => {
       const result =
         mode === "edit" && entry
-          ? await updateJournalEntryHeaderAction(entry.id, {
+          ? await updateJournalEntryAction(entry.id, {
               companyId,
               fiscalYearId,
               accountingPeriodId,
@@ -123,6 +157,7 @@ export function JournalEntryForm({
               description: description.trim() || undefined,
               label: label.trim() || undefined,
               sourceType,
+              lines: linesPayload,
             })
           : await createJournalEntryAction({
               companyId,
@@ -134,7 +169,7 @@ export function JournalEntryForm({
               description: description.trim() || undefined,
               label: label.trim() || undefined,
               sourceType,
-              lines: [],
+              lines: linesPayload,
             });
 
       if (result.ok) {
@@ -148,7 +183,7 @@ export function JournalEntryForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="max-w-2xl space-y-6">
+    <form onSubmit={handleSubmit} className="max-w-4xl space-y-6">
       {error ? (
         <div className="flex items-start gap-2 rounded border border-negative/30 bg-negative/5 px-3 py-2 text-sm text-negative">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -279,6 +314,10 @@ export function JournalEntryForm({
             ))}
           </Select>
         </div>
+      </div>
+
+      <div className="border-t border-ink-100 pt-6">
+        <JournalLinesEditor accounts={accounts} lines={lines} onChange={setLines} disabled={isPending} />
       </div>
 
       <div className="flex items-center gap-3 border-t border-ink-100 pt-6">

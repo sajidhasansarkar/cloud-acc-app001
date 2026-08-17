@@ -6,8 +6,10 @@ import { requireOwnedCompany } from "@/lib/company-guard";
 import { getJournalEntry } from "@/accounting/journal-entries";
 import { listFiscalYears } from "@/accounting/fiscal-years";
 import { listAccountingPeriods } from "@/accounting/accounting-periods";
+import { listAccounts } from "@/accounting/accounts";
 import { canManageJournalEntries } from "@/lib/rbac";
 import { JournalEntryForm } from "@/components/journal-entries/journal-entry-form";
+import type { JournalLineDraft } from "@/components/journal-entries/journal-lines-editor";
 
 export const metadata = { title: "Edit Journal Entry — Ledger" };
 
@@ -41,8 +43,28 @@ export default async function EditJournalEntryPage({
     redirect(detailPath);
   }
 
-  const fiscalYears = (await listFiscalYears(organization.id, company.id)) ?? [];
-  const initialPeriods = (await listAccountingPeriods(organization.id, company.id, entry.fiscalYearId)) ?? [];
+  const [fiscalYearsResult, initialPeriodsResult, accountsResult] = await Promise.all([
+    listFiscalYears(organization.id, company.id),
+    listAccountingPeriods(organization.id, company.id, entry.fiscalYearId),
+    listAccounts(organization.id, company.id),
+  ]);
+  const fiscalYears = fiscalYearsResult ?? [];
+  const initialPeriods = initialPeriodsResult ?? [];
+  const accounts = accountsResult ?? [];
+
+  // Existing lines converted to editor drafts: debit/credit stay as
+  // strings (never parsed to a JS float — see JournalLinesEditor), and
+  // whichever side is zero is shown as an empty field rather than "0" so
+  // the debit/credit UI rule (spec section 9) reads the line the same
+  // way a freshly-added line would.
+  const initialLines: JournalLineDraft[] = entry.lines.map((line) => ({
+    key: line.id,
+    accountId: line.accountId,
+    description: line.description ?? "",
+    reference: line.reference ?? "",
+    debit: Number(line.debit) > 0 ? line.debit.toString() : "",
+    credit: Number(line.credit) > 0 ? line.credit.toString() : "",
+  }));
 
   return (
     <div className="space-y-6">
@@ -78,6 +100,8 @@ export default async function EditJournalEntryPage({
             sourceType: entry.sourceType,
           }}
           cancelHref={detailPath}
+          accounts={accounts}
+          initialLines={initialLines}
         />
       </div>
     </div>

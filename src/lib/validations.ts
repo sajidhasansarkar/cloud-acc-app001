@@ -237,13 +237,14 @@ const decimalAmountSchema = z
   })
   .refine((v) => Number(v) >= 0, { message: "Amount cannot be negative" });
 
-const journalEntryLineSchema = z.object({
+export const journalEntryLineSchema = z.object({
   accountId: z.string().trim().min(1, "Account is required"),
   description: optionalTrimmed(500),
   reference: optionalTrimmed(100),
   debit: decimalAmountSchema,
   credit: decimalAmountSchema,
 });
+export type JournalEntryLineFormInput = z.infer<typeof journalEntryLineSchema>;
 
 const journalEntryBaseSchema = {
   companyId: z.string().trim().min(1, "companyId is required"),
@@ -301,6 +302,21 @@ export const updateJournalEntryHeaderSchema = z.object({
   sourceType: journalEntrySourceTypeSchema.default("MANUAL"),
 });
 export type UpdateJournalEntryHeaderInput = z.infer<typeof updateJournalEntryHeaderSchema>;
+
+// ------------------------------
+// Journal Entries — header + journal lines editing (Phase 4A-3A)
+// ------------------------------
+
+// The Edit Draft screen's full write path (spec section 15): the same
+// editable header fields as updateJournalEntryHeaderSchema, plus `lines`
+// (reusing journalEntryLineSchema — the exact shape createJournalEntrySchema
+// already validates lines with, so a line is never validated two different
+// ways depending on whether it came from New or Edit). Still no
+// `entryNumber`, since it's still not editable (spec section 10).
+export const updateJournalEntryWithLinesSchema = updateJournalEntryHeaderSchema.extend({
+  lines: z.array(journalEntryLineSchema).default([]),
+});
+export type UpdateJournalEntryWithLinesInput = z.infer<typeof updateJournalEntryWithLinesSchema>;
 
 // ------------------------------
 // Company Settings — Accounting tab (Phase 2B-2B-2)
