@@ -88,15 +88,32 @@ project:
 
 1. Push this repository to its own Git repo.
 2. Import it into a **new** Vercel project.
-3. Add the same environment variables from `.env` in the Vercel project
-   settings (`DATABASE_URL`, `DIRECT_URL`, `NEXTAUTH_SECRET`,
-   `NEXTAUTH_URL` — set `NEXTAUTH_URL` to your production URL).
-4. Run `npx prisma migrate deploy` against the production database (via a
-   build step or manually) before or during the first deploy.
+3. Add these environment variables in the Vercel project settings:
+   - `DATABASE_URL`
+   - `DIRECT_URL`
+   - `NEXTAUTH_SECRET`
+   - `NEXTAUTH_URL` (your production URL)
+   - `DOCUMENT_STORAGE_PROVIDER=vercel-blob`
+   - `BLOB_READ_WRITE_TOKEN` (from a **private** Vercel Blob store)
+4. The production build runs `prisma migrate deploy && next build`, so pending
+   Prisma migrations are applied automatically during deployment.
 5. Run `npm run db:seed` once against the production database to create the
    first admin account (or create one manually via Prisma Studio).
 
-\n### Vercel document storage\n\nFor Vercel deployments, document storage must use persistent Vercel Blob storage. Set these Vercel environment variables:\n\n```text\nDOCUMENT_STORAGE_PROVIDER=vercel-blob\nBLOB_READ_WRITE_TOKEN=<your-private-vercel-blob-token>\n```\n\nThe application defaults to `vercel-blob` when `VERCEL` is set, while local development defaults to `.storage/documents`. Keep the Blob store private because uploaded accounting documents may contain sensitive financial information. If the previously exposed Neon `DATABASE_URL` credential was ever active, rotate/revoke it in Neon before deploying.\n
+### Vercel document storage
+
+Production document uploads use Vercel Blob rather than the serverless local
+filesystem. `DOCUMENT_STORAGE_PROVIDER` is explicitly set to `vercel-blob`
+above; the application also defaults to `vercel-blob` when the `VERCEL`
+environment variable is present. Local development defaults to `local`.
+
+The Blob store should be **private** because uploaded accounting documents
+may contain sensitive financial information. Do not commit `BLOB_READ_WRITE_TOKEN`
+or any other secrets.
+
+If the previously exposed Neon database credential was ever active, rotate/revoke
+it in Neon and replace both production/local credentials.
+
 ## Project structure
 
 ```

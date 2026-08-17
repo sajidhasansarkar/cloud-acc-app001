@@ -1,12 +1,32 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { Prisma } from "@prisma/client";
 import { requireActiveOrganization } from "@/lib/session";
 import { getOwnedCompany } from "@/accounting/access";
 import { prisma } from "@/lib/prisma";
 import { canManageDocuments, canReviewAI } from "@/lib/rbac";
 import { buildAccountingAIContext, prepareAIReview } from "@/ai/context";
 import { acceptAccountingAISuggestion, editAccountingAISuggestion, generateAccountingAISuggestion, getAccountingAIReview, rejectAccountingAISuggestion } from "@/ai/review";
+
+type AIReviewSuggestionWithAccount = Prisma.AIReviewSuggestionGetPayload<{
+  include: {
+    suggestedAccount: { select: { id: true, code: true, name: true, type: true } };
+  };
+}>;
+
+type AIReviewAuditWithUser = Prisma.AIReviewAuditGetPayload<{
+  select: {
+    id: true;
+    action: true;
+    provider: true;
+    model: true;
+    contextVersion: true;
+    confidence: true;
+    createdAt: true;
+    user: { select: { id: true, name: true } };
+  };
+}>;
 
 export async function prepareAIReviewAction(companyId: string, documentId: string, candidateId: string) {
   const { role, user, organization } = await requireActiveOrganization();
@@ -54,13 +74,13 @@ export async function getAIReviewAction(companyId: string, documentId: string, c
     humanDebit: review.humanDebit?.toString() ?? null,
     humanCredit: review.humanCredit?.toString() ?? null,
     humanAmount: review.humanAmount?.toString() ?? null,
-    suggestions: review.suggestions.map((suggestion) => ({
+    suggestions: review.suggestions.map((suggestion: AIReviewSuggestionWithAccount) => ({
       ...suggestion,
       suggestedDebit: suggestion.suggestedDebit?.toString() ?? null,
       suggestedCredit: suggestion.suggestedCredit?.toString() ?? null,
       suggestedAmount: suggestion.suggestedAmount?.toString() ?? null,
     })),
-    audits: review.audits.map((audit) => ({ ...audit, createdAt: audit.createdAt.toISOString() })),
+    audits: review.audits.map((audit: AIReviewAuditWithUser) => ({ ...audit, createdAt: audit.createdAt.toISOString() })),
   };
   return { ok: true as const, review: serialized };
 }
