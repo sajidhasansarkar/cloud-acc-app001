@@ -175,6 +175,25 @@ enum JournalEntrySourceType {
   OTHER
 }
 
+enum DocumentStatus {
+  UPLOADED
+  PROCESSING
+  PROCESSED
+  FAILED
+  ARCHIVED
+}
+
+enum DocumentFileType {
+  PDF
+  XLSX
+  XLS
+  CSV
+  JPG
+  JPEG
+  PNG
+  WEBP
+}
+
 // ------------------------------
 // Auth / Identity
 // ------------------------------
@@ -198,6 +217,7 @@ model User {
   // who created it is later removed; application code decides how
   // createdById is displayed (see JournalEntry.createdBy comment below).
   journalEntriesCreated JournalEntry[]
+  documentsUploaded Document[]
 
   @@map("users")
 }
@@ -212,6 +232,7 @@ model Organization {
 
   memberships Membership[]
   companies   Company[]
+  documents   Document[]
 
   @@map("organizations")
 }
@@ -287,6 +308,7 @@ model Company {
   taxCodes          TaxCode[]
   accountMappings   AccountMapping[]
   journalEntries    JournalEntry[]
+  documents         Document[]
 
   @@index([organizationId])
   @@index([countryConfigurationId])
@@ -617,6 +639,34 @@ model AccountMapping {
   @@index([accountId])
   @@index([taxCodeId])
   @@map("account_mappings")
+}
+
+// ------------------------------
+// Documents (Phase 4B-1 — intake/storage foundation only)
+// ------------------------------
+
+model Document {
+  id               String         @id @default(cuid())
+  organizationId   String
+  companyId        String
+  uploadedById     String
+  originalFileName String
+  fileType         DocumentFileType
+  mimeType         String
+  fileSize         BigInt
+  storageKey       String         @unique
+  documentStatus   DocumentStatus @default(UPLOADED)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  uploadedBy   User         @relation(fields: [uploadedById], references: [id])
+
+  @@index([organizationId, companyId, createdAt])
+  @@index([companyId, documentStatus])
+  @@index([uploadedById])
+  @@map("documents")
 }
 
 // ------------------------------

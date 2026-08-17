@@ -64,6 +64,10 @@ export function canManageJournalEntries(role: Role) {
   return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT";
 }
 
+export function canManageDocuments(role: Role) {
+  return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT";
+}
+
 export function canManageMembers(role: Role) {
   return role === "ADMIN";
 }
