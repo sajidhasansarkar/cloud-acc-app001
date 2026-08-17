@@ -15,12 +15,16 @@ import {
   postJournalEntry,
   voidJournalEntry,
   deleteJournalEntry,
+  reorderJournalEntryLine,
   updateJournalEntryHeader,
   updateJournalEntry,
   validateJournalEntryBalance,
   type JournalEntryResult,
+  type ListJournalEntriesInput,
+  type JournalEntryListResult,
+  listJournalEntryLabels,
 } from "@/accounting/journal-entries";
-import type { JournalEntry, JournalEntryLine, JournalEntrySourceType } from "@prisma/client";
+import type { JournalEntrySourceType } from "@prisma/client";
 
 /**
  * Auth/validation entry points the Journal Entry UI calls. Each one:
@@ -81,10 +85,15 @@ export async function createJournalEntryAction(input: {
 
 export async function listJournalEntriesAction(
   companyId: string,
-  filters?: { status?: JournalEntry["status"]; accountingPeriodId?: string; fiscalYearId?: string }
-): Promise<(JournalEntry & { lines: JournalEntryLine[] })[] | null> {
+  filters: ListJournalEntriesInput = {}
+): Promise<JournalEntryListResult | null> {
   const { organization } = await requireActiveOrganization();
   return listJournalEntries(organization.id, companyId, filters);
+}
+
+export async function listJournalEntryLabelsAction(companyId: string): Promise<string[] | null> {
+  const { organization } = await requireActiveOrganization();
+  return listJournalEntryLabels(organization.id, companyId);
 }
 
 export async function getJournalEntryAction(companyId: string, journalEntryId: string) {
@@ -184,6 +193,39 @@ export async function updateJournalEntryAction(
   return result;
 }
 
+
+export async function reorderJournalEntryLineAction(
+  companyId: string,
+  journalEntryId: string,
+  journalEntryLineId: string,
+  direction: "UP" | "DOWN"
+): Promise<JournalEntryResult> {
+  const { role, organization } = await requireActiveOrganization();
+
+  if (!canManageJournalEntries(role)) {
+    return { ok: false, error: "You don't have permission to manage journal entries." };
+  }
+
+  if (direction !== "UP" && direction !== "DOWN") {
+    return { ok: false, error: "Invalid line movement." };
+  }
+
+  const result = await reorderJournalEntryLine(
+    organization.id,
+    companyId,
+    journalEntryId,
+    journalEntryLineId,
+    direction
+  );
+
+  if (result.ok) {
+    revalidatePath(`/companies/${companyId}/journal-entries`);
+    revalidatePath(`/companies/${companyId}/journal-entries/${journalEntryId}`);
+    revalidatePath(`/companies/${companyId}/journal-entries/${journalEntryId}/edit`);
+  }
+
+  return result;
+}
 
 export async function validateJournalEntryBalanceAction(companyId: string, journalEntryId: string) {
   const { organization } = await requireActiveOrganization();

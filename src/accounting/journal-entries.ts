@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import type { JournalEntry, JournalEntryLine, JournalEntrySourceType } from "@prisma/client";
+import type { JournalEntry, JournalEntryLine, JournalEntrySourceType, JournalEntryStatus } from "@prisma/client";
 import {
   getOwnedCompany,
   getOwnedFiscalYear,
@@ -417,30 +417,160 @@ export async function getJournalEntry(organizationId: string, companyId: string,
  * search/filter UI (spec section 11) will realistically narrow by — none
  * required, and none implement any real search/filter UI here.
  */
+export type JournalEntryListSort =
+  | "entryDate"
+  | "entryNumber"
+  | "reference"
+  | "status"
+  | "createdAt";
+
+export type JournalEntryListDatePreset = "today" | "this_month";
+
+export type ListJournalEntriesInput = {
+  search?: string;
+  status?: JournalEntryStatus;
+  sourceType?: JournalEntrySourceType;
+  fiscalYearId?: string;
+  accountingPeriodId?: string;
+  label?: string;
+  reference?: string;
+  datePreset?: JournalEntryListDatePreset;
+  startDate?: Date;
+  endDate?: Date;
+  sort?: JournalEntryListSort;
+  direction?: "asc" | "desc";
+  page?: number;
+  pageSize?: number;
+};
+
+export type JournalEntryListResult = {
+  entries: (JournalEntry & { createdBy: { id: string; name: string } | null })[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+function startOfUtcDay(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function endOfUtcDay(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1));
+}
+
+/**
+ * Server-side Journal Entry list query for Phase 4A-4B. Every predicate is
+ * applied inside the company-scoped Prisma query, so the browser can never
+ * search or filter records outside the authenticated user's organization and
+ * selected company.
+ */
 export async function listJournalEntries(
   organizationId: string,
   companyId: string,
-  filters?: {
-    status?: JournalEntry["status"];
-    accountingPeriodId?: string;
-    fiscalYearId?: string;
-  }
-) {
+  input: ListJournalEntriesInput = {}
+): Promise<JournalEntryListResult | null> {
   const company = await getOwnedCompany(organizationId, companyId);
   if (!company) return null;
 
-  return prisma.journalEntry.findMany({
-    where: {
-      companyId: company.id,
-      ...(filters?.status ? { status: filters.status } : {}),
-      ...(filters?.accountingPeriodId ? { accountingPeriodId: filters.accountingPeriodId } : {}),
-      ...(filters?.fiscalYearId ? { fiscalYearId: filters.fiscalYearId } : {}),
-    },
-    // createdBy selects only { id, name } — never email/passwordHash
-    // (spec section 12) — for the list's "Created By" column (Phase 4A-2).
-    include: { lines: true, createdBy: { select: { id: true, name: true } } },
-    orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }],
+  const pageSize = Math.min(Math.max(input.pageSize ?? 25, 1), 100);
+  const page = Math.max(input.page ?? 1, 1);
+  const sort = input.sort ?? "entryDate";
+  const direction = input.direction ?? "desc";
+
+  const where: Prisma.JournalEntryWhereInput = {
+    companyId: company.id,
+  };
+
+  const search = input.search?.trim();
+  if (search) {
+    where.OR = [
+      { entryNumber: { contains: search, mode: "insensitive" } },
+      { reference: { contains: search, mode: "insensitive" } },
+      { description: { contains: search, mode: "insensitive" } },
+      { label: { contains: search, mode: "insensitive" } },
+    ];
+  }
+
+  if (input.status) where.status = input.status;
+  if (input.sourceType) where.sourceType = input.sourceType;
+  if (input.fiscalYearId) where.fiscalYearId = input.fiscalYearId;
+  if (input.accountingPeriodId) where.accountingPeriodId = input.accountingPeriodId;
+  if (input.label) where.label = { equals: input.label };
+  if (input.reference) {
+    where.reference = { contains: input.reference.trim(), mode: "insensitive" };
+  }
+
+  const now = new Date();
+  if (input.datePreset === "today") {
+    where.entryDate = { gte: startOfUtcDay(now), lt: endOfUtcDay(now) };
+  } else if (input.datePreset === "this_month") {
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    where.entryDate = { gte: monthStart, lt: nextMonthStart };
+  } else if (input.startDate || input.endDate) {
+    const range: Prisma.DateTimeFilter = {};
+    if (input.startDate) range.gte = startOfUtcDay(input.startDate);
+    if (input.endDate) range.lt = endOfUtcDay(input.endDate);
+    where.entryDate = range;
+  }
+
+  const primaryOrder: Prisma.JournalEntryOrderByWithRelationInput =
+    sort === "entryDate"
+      ? { entryDate: direction }
+      : sort === "entryNumber"
+        ? { entryNumber: direction }
+        : sort === "reference"
+          ? { reference: direction }
+          : sort === "status"
+            ? { status: direction }
+            : { createdAt: direction };
+  const orderBy: Prisma.JournalEntryOrderByWithRelationInput[] = [primaryOrder];
+  if (sort !== "entryDate") orderBy.push({ entryDate: "desc" });
+  orderBy.push({ id: "desc" });
+
+  const [total, entries] = await prisma.$transaction([
+    prisma.journalEntry.count({ where }),
+    prisma.journalEntry.findMany({
+      where,
+      include: { createdBy: { select: { id: true, name: true } } },
+      orderBy,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+
+  // If a stale URL points beyond the final page, fetch the final page rather
+  // than returning an empty table while still reporting the correct count.
+  if (safePage !== page && total > 0) {
+    const finalEntries = await prisma.journalEntry.findMany({
+      where,
+      include: { createdBy: { select: { id: true, name: true } } },
+      orderBy,
+      skip: (safePage - 1) * pageSize,
+      take: pageSize,
+    });
+    return { entries: finalEntries, total, page: safePage, pageSize, totalPages };
+  }
+
+  return { entries, total, page: safePage, pageSize, totalPages };
+}
+
+export async function listJournalEntryLabels(organizationId: string, companyId: string): Promise<string[] | null> {
+  const company = await getOwnedCompany(organizationId, companyId);
+  if (!company) return null;
+
+  const rows = await prisma.journalEntry.findMany({
+    where: { companyId: company.id, label: { not: null } },
+    select: { label: true },
+    distinct: ["label"],
+    orderBy: { label: "asc" },
   });
+
+  return rows.map((row) => row.label).filter((label): label is string => Boolean(label));
 }
 
 // ------------------------------
@@ -645,6 +775,121 @@ export async function updateJournalEntry(
   }
 
   return { ok: true, entry };
+}
+
+
+// ------------------------------
+// Draft line reordering (Phase 4A-4A)
+// ------------------------------
+
+export type JournalLineMoveDirection = "UP" | "DOWN";
+
+/**
+ * Moves one persisted journal line within a DRAFT entry without deleting or
+ * recreating the line. The two affected rows exchange their lineNumber
+ * values inside one transaction, so the JournalEntryLine ids remain stable.
+ * The transaction also re-checks organization/company ownership and DRAFT
+ * status so a stale UI cannot mutate a POSTED/VOID entry.
+ */
+export async function reorderJournalEntryLine(
+  organizationId: string,
+  companyId: string,
+  journalEntryId: string,
+  journalEntryLineId: string,
+  direction: JournalLineMoveDirection
+): Promise<JournalEntryResult> {
+  const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
+  if (!existing) return { ok: false, error: "Journal entry not found." };
+  if (existing.status === "POSTED") return { ok: false, error: "Posted journal entries are locked." };
+  if (existing.status === "VOID") return { ok: false, error: "Void journal entries cannot be modified." };
+
+  const currentLine = existing.lines.find((line) => line.id === journalEntryLineId);
+  if (!currentLine) return { ok: false, error: "Journal line not found." };
+
+  const targetLineNumber = direction === "UP" ? currentLine.lineNumber - 1 : currentLine.lineNumber + 1;
+  const targetLine = existing.lines.find((line) => line.lineNumber === targetLineNumber);
+  if (!targetLine) {
+    return { ok: false, error: direction === "UP" ? "This line is already first." : "This line is already last." };
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const current = await tx.journalEntry.findFirst({
+      where: { id: journalEntryId, companyId, company: { organizationId } },
+      select: { id: true, companyId: true, status: true },
+    });
+
+    if (!current || current.companyId !== companyId) throw new Error("JOURNAL_ENTRY_NOT_FOUND");
+    if (current.status === "POSTED") throw new Error("JOURNAL_ENTRY_POSTED");
+    if (current.status === "VOID") throw new Error("JOURNAL_ENTRY_VOID");
+    if (current.status !== "DRAFT") throw new Error("JOURNAL_ENTRY_NOT_EDITABLE");
+
+    const lines = await tx.journalEntryLine.findMany({
+      where: { journalEntryId: current.id },
+      select: { id: true, lineNumber: true },
+      orderBy: { lineNumber: "asc" },
+    });
+    const index = lines.findIndex((line) => line.id === journalEntryLineId);
+    if (index === -1) throw new Error("JOURNAL_LINE_NOT_FOUND");
+
+    const targetIndex = direction === "UP" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= lines.length) throw new Error("JOURNAL_LINE_AT_BOUNDARY");
+
+    const currentDbLine = lines[index];
+    const targetDbLine = lines[targetIndex];
+
+    // No unique constraint exists on lineNumber, but a temporary value keeps
+    // the swap safe even if a future schema adds one.
+    await tx.journalEntryLine.update({
+      where: { id: currentDbLine.id },
+      data: { lineNumber: 0 },
+    });
+    await tx.journalEntryLine.update({
+      where: { id: targetDbLine.id },
+      data: { lineNumber: currentDbLine.lineNumber },
+    });
+    await tx.journalEntryLine.update({
+      where: { id: currentDbLine.id },
+      data: { lineNumber: targetDbLine.lineNumber },
+    });
+
+    // Normalize every line number from the persisted order. This guarantees
+    // 1..N with no gaps or duplicates even if older data was inconsistent.
+    const normalized = await tx.journalEntryLine.findMany({
+      where: { journalEntryId: current.id },
+      select: { id: true },
+      orderBy: { lineNumber: "asc" },
+    });
+    for (let i = 0; i < normalized.length; i += 1) {
+      await tx.journalEntryLine.update({ where: { id: normalized[i].id }, data: { lineNumber: i + 1 } });
+    }
+
+    return tx.journalEntry.findUniqueOrThrow({
+      where: { id: current.id },
+      include: { lines: true },
+    });
+  }).catch((error: unknown) => {
+    if (!(error instanceof Error)) throw error;
+    const messages: Record<string, string> = {
+      JOURNAL_ENTRY_NOT_FOUND: "Journal entry not found.",
+      JOURNAL_ENTRY_POSTED: "Posted journal entries are locked.",
+      JOURNAL_ENTRY_VOID: "Void journal entries cannot be modified.",
+      JOURNAL_ENTRY_NOT_EDITABLE: "Only DRAFT journal entries can be reordered.",
+      JOURNAL_LINE_NOT_FOUND: "Journal line not found.",
+      JOURNAL_LINE_AT_BOUNDARY: direction === "UP" ? "This line is already first." : "This line is already last.",
+    };
+    if (messages[error.message]) return null;
+    throw error;
+  });
+
+  if (!result) {
+    const latest = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
+    if (!latest) return { ok: false, error: "Journal entry not found." };
+    if (latest.status === "POSTED") return { ok: false, error: "Posted journal entries are locked." };
+    if (latest.status === "VOID") return { ok: false, error: "Void journal entries cannot be modified." };
+    return { ok: false, error: "The journal line could not be reordered." };
+  }
+
+  return { ok: true, entry: result };
 }
 
 // ------------------------------

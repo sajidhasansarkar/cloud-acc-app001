@@ -8,9 +8,10 @@ import { canManageJournalEntries } from "@/lib/rbac";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { JournalEntryStatusBadge } from "@/components/journal-entries/journal-entry-status-badge";
 import { JournalEntryBalanceSummary } from "@/components/journal-entries/journal-entry-balance-summary";
+import { JournalEntryDeleteAction } from "@/components/journal-entries/journal-entry-delete-action";
+import { JournalEntryLinesManager } from "@/components/journal-entries/journal-entry-lines-manager";
 import { JOURNAL_ENTRY_SOURCE_TYPE_LABELS } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
 import type { JournalEntrySourceType } from "@prisma/client";
@@ -81,11 +82,24 @@ export default async function JournalEntryDetailPage({
           <p className="text-sm text-ink-500">{company.displayName}</p>
         </div>
 
-        {canManage && entry.status === "DRAFT" ? (
-          <Link href={`${basePath}/${entry.id}/edit`} className={buttonVariants({ variant: "outline" })}>
-            <Pencil className="h-4 w-4" />
-            Edit
-          </Link>
+        {canManage ? (
+          <div className="flex items-center gap-2">
+            <Link
+              href={`${basePath}/${entry.id}/edit`}
+              aria-disabled={entry.status !== "DRAFT"}
+              tabIndex={entry.status === "DRAFT" ? 0 : -1}
+              className={buttonVariants({ variant: "outline" }) + (entry.status !== "DRAFT" ? " pointer-events-none opacity-50" : "")}
+            >
+              <Pencil className="h-4 w-4" />
+              Edit
+            </Link>
+            <JournalEntryDeleteAction
+              companyId={company.id}
+              journalEntryId={entry.id}
+              entryNumber={entry.entryNumber}
+              status={entry.status}
+            />
+          </div>
         ) : null}
       </div>
 
@@ -111,49 +125,42 @@ export default async function JournalEntryDetailPage({
         </CardContent>
       </Card>
 
+      {entry.status === "POSTED" ? (
+        <div className="rounded-lg border border-ink-200 bg-surface-muted px-4 py-3 text-sm text-ink-700">
+          Posted journal entries are locked.
+        </div>
+      ) : entry.status === "VOID" ? (
+        <div className="rounded-lg border border-ink-200 bg-surface-muted px-4 py-3 text-sm text-ink-700">
+          Void journal entries cannot be modified.
+        </div>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Journal Lines</CardTitle>
-          <CardDescription>Journal line amounts and current balance validation.</CardDescription>
+          <CardDescription>
+            {entry.status === "DRAFT"
+              ? "Edit the draft for field changes; use Move Up or Move Down to persist line order without recreating lines."
+              : "Journal line amounts and current balance validation."}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {entry.lines.length === 0 ? (
             <EmptyState icon={ListChecks} title="No journal lines added." />
           ) : (
-            <div className="rounded-lg border border-ink-100">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-10">#</TableHead>
-                    <TableHead>Account</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Reference</TableHead>
-                    <TableHead className="text-right">Debit</TableHead>
-                    <TableHead className="text-right">Credit</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {entry.lines.map((line, index) => (
-                    <TableRow key={line.id}>
-                      <TableCell className="text-ink-500">{index + 1}</TableCell>
-                      <TableCell className="text-ink-800">
-                        <span className="font-mono text-xs text-ink-500">{line.account.code}</span>
-                        {" — "}
-                        {line.account.name}
-                      </TableCell>
-                      <TableCell className="text-ink-700">{line.description || "—"}</TableCell>
-                      <TableCell className="text-ink-700">{line.reference || "—"}</TableCell>
-                      <TableCell className="text-right font-mono text-ink-800">
-                        {line.debit.gt(0) ? line.debit.toFixed(2) : "—"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-ink-800">
-                        {line.credit.gt(0) ? line.credit.toFixed(2) : "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <JournalEntryLinesManager
+              companyId={company.id}
+              journalEntryId={entry.id}
+              status={entry.status}
+              lines={entry.lines.map((line) => ({
+                id: line.id,
+                description: line.description,
+                reference: line.reference,
+                debit: line.debit.toString(),
+                credit: line.credit.toString(),
+                account: { code: line.account.code, name: line.account.name },
+              }))}
+            />
           )}
 
           <div className="mt-4">

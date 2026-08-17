@@ -5,6 +5,7 @@ import { useId } from "react";
 import { ListChecks, Plus, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AccountPicker } from "@/components/journal-entries/account-picker";
@@ -86,6 +87,7 @@ export function JournalLinesEditor({
   disabled?: boolean;
 }) {
   const headingId = useId();
+  const [removeKey, setRemoveKey] = React.useState<string | null>(null);
 
   function updateLine(key: string, patch: Partial<JournalLineDraft>) {
     onChange(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)));
@@ -108,11 +110,8 @@ export function JournalLinesEditor({
   }
 
   function removeLine(key: string) {
-    // Line numbers are never stored on the draft itself — the row's
-    // position in this array is its line number (spec section 11:
-    // removing a line recalculates the numbers that follow it), so
-    // removing just means dropping it from the array.
     onChange(lines.filter((line) => line.key !== key));
+    setRemoveKey(null);
   }
 
   const totalDebit = sumDecimalStrings(lines.map((l) => l.debit));
@@ -250,7 +249,7 @@ export function JournalLinesEditor({
                     <TableCell className="text-right">
                       <button
                         type="button"
-                        onClick={() => removeLine(line.key)}
+                        onClick={() => setRemoveKey(line.key)}
                         disabled={disabled}
                         aria-label={`Remove line ${index + 1}`}
                         className="inline-flex h-8 w-8 items-center justify-center rounded text-ink-400 hover:bg-negative/10 hover:text-negative disabled:pointer-events-none disabled:opacity-50"
@@ -281,6 +280,31 @@ export function JournalLinesEditor({
         difference={difference}
         balanced={balanced}
         validationMessage={balanceMessage}
+      />
+
+      <Dialog
+        open={removeKey !== null}
+        onOpenChange={(open) => {
+          if (!open) setRemoveKey(null);
+        }}
+        title="Remove journal line?"
+        description="This removes the line from the draft. The remaining lines will be renumbered when the draft is saved."
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={() => setRemoveKey(null)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                if (removeKey) removeLine(removeKey);
+              }}
+            >
+              Remove line
+            </Button>
+          </>
+        }
       />
     </div>
   );
