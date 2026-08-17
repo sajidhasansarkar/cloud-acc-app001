@@ -831,6 +831,7 @@ model AIReviewSuggestion {
   candidate        NormalizedTransactionCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   suggestedAccount Account? @relation("AISuggestedAccount", fields: [suggestedAccountId], references: [id], onDelete: SetNull)
   audits           AIReviewAudit[]
+  reviewRecord     AIReviewRecord?
 
   @@index([candidateId, createdAt])
   @@index([suggestedAccountId])
@@ -851,6 +852,7 @@ model AIReviewAudit {
 
   candidate  NormalizedTransactionCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   suggestion AIReviewSuggestion? @relation(fields: [suggestionId], references: [id], onDelete: SetNull)
+  reviewRecord AIReviewRecord?
   user       User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([candidateId, createdAt])
