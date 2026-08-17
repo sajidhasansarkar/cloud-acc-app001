@@ -7,7 +7,11 @@ import { validateDocumentFile } from "@/documents/validation";
 export async function listDocuments(organizationId: string, companyId: string) {
   return prisma.document.findMany({
     where: { organizationId, companyId, company: { organizationId } },
-    select: { id: true, originalFileName: true, fileType: true, fileSize: true, documentStatus: true, createdAt: true, uploadedBy: { select: { name: true } } },
+    select: {
+      id: true, originalFileName: true, fileType: true, fileSize: true, documentStatus: true, createdAt: true,
+      uploadedBy: { select: { name: true } },
+      processingResult: { select: { pageCount: true, sheetCount: true, rowCount: true, columnCount: true, requiresOcr: true, processingError: true, processedAt: true } },
+    },
     orderBy: { createdAt: "desc" },
   });
 }
@@ -15,7 +19,18 @@ export async function listDocuments(organizationId: string, companyId: string) {
 export async function getOwnedDocument(organizationId: string, companyId: string, documentId: string) {
   return prisma.document.findFirst({
     where: { id: documentId, organizationId, companyId, company: { organizationId } },
-    select: { id: true, storageKey: true },
+    select: { id: true, storageKey: true, fileType: true, documentStatus: true },
+  });
+}
+
+export async function getOwnedDocumentDetails(organizationId: string, companyId: string, documentId: string) {
+  return prisma.document.findFirst({
+    where: { id: documentId, organizationId, companyId, company: { organizationId } },
+    select: {
+      id: true, originalFileName: true, fileType: true, mimeType: true, fileSize: true, documentStatus: true, createdAt: true, updatedAt: true,
+      uploadedBy: { select: { name: true } },
+      processingResult: { select: { pageCount: true, sheetCount: true, rowCount: true, columnCount: true, requiresOcr: true, processingError: true, processedAt: true } },
+    },
   });
 }
 

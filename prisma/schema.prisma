@@ -645,6 +645,27 @@ model AccountMapping {
 // Documents (Phase 4B-1 — intake/storage foundation only)
 // ------------------------------
 
+
+model DocumentProcessingResult {
+  id                         String         @id @default(cuid())
+  documentId                 String         @unique
+  detectedFileType           DocumentFileType
+  pageCount                  Int?
+  sheetCount                 Int?
+  rowCount                   Int?
+  columnCount                Int?
+  requiresOcr                Boolean        @default(false)
+  extractedContentReference  String?
+  processingError            String?
+  processedAt                DateTime?
+  createdAt                  DateTime       @default(now())
+  updatedAt                  DateTime       @updatedAt
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("document_processing_results")
+}
+
 model Document {
   id               String         @id @default(cuid())
   organizationId   String
@@ -658,6 +679,8 @@ model Document {
   documentStatus   DocumentStatus @default(UPLOADED)
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
+
+  processingResult DocumentProcessingResult?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
