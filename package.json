@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "(prisma migrate resolve --rolled-back 20260817112000_phase4b4_ai_review_context || true) && prisma migrate deploy && next build",
+    "build": "prisma migrate deploy && next build",
     "postinstall": "prisma generate",
     "start": "next start",
     "lint": "next lint",

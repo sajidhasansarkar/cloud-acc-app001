@@ -79,7 +79,8 @@ export async function finalizeUploadedDocument(
   const storage = getDocumentStorage();
   try {
     const buffer = await storage.read(storageKey);
-    const file = new File([buffer], originalFileName.trim(), { type: mimeType.toLowerCase() });
+    const fileBytes = Uint8Array.from(buffer);
+    const file = new File([fileBytes], originalFileName.trim(), { type: mimeType.toLowerCase() });
     const validation = await validateDocumentFile(file);
     if (!validation.ok) {
       await storage.delete(storageKey);

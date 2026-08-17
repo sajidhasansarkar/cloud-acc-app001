@@ -96,6 +96,7 @@ project:
 5. Run `npm run db:seed` once against the production database to create the
    first admin account (or create one manually via Prisma Studio).
 
+\n### Vercel document storage\n\nFor Vercel deployments, document storage must use persistent Vercel Blob storage. Set these Vercel environment variables:\n\n```text\nDOCUMENT_STORAGE_PROVIDER=vercel-blob\nBLOB_READ_WRITE_TOKEN=<your-private-vercel-blob-token>\n```\n\nThe application defaults to `vercel-blob` when `VERCEL` is set, while local development defaults to `.storage/documents`. Keep the Blob store private because uploaded accounting documents may contain sensitive financial information. If the previously exposed Neon `DATABASE_URL` credential was ever active, rotate/revoke it in Neon before deploying.\n
 ## Project structure
 
 ```
