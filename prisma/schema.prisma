@@ -1,11 +1,16 @@
-// Accounting Platform — Phase 1 + Phase 2A + Phase 2B-1 + Phase 3A-1 schema
+// Accounting Platform — Phase 1 + Phase 2A + Phase 2B-1 + Phase 3A-1 + Phase
+// 3B-1 schema
 // Phase 1: auth, organizations, memberships, companies (foundation).
 // Phase 2A: full company management + reusable country configuration.
 // Phase 2B-1: fiscal year / accounting period foundation (backend only —
 // no UI yet, that's Phase 2B-2).
 // Phase 3A-1: chart of accounts database foundation (backend only — no UI
 // yet). See the Account model below.
-// Do not add journal entries/transactions/ledger/tax/AI models here yet —
+// Phase 3B-1: tax code database foundation (backend only — no UI yet). See
+// the TaxCode model below. No tax calculation, filing, returns, AI tax
+// decisions, account mapping, or journal entries yet — those belong to
+// later phases.
+// Do not add journal entries/transactions/ledger/AI models here yet —
 // those belong to later phases.
 
 generator client {
@@ -81,6 +86,35 @@ enum AccountType {
   EQUITY
   REVENUE
   EXPENSE
+}
+
+// Tax Code database foundation (Phase 3B-1). The broad category of tax a
+// TaxCode represents. Deliberately an enum, not a free-form string — unlike
+// Account.subtype, this is a small, standard, DB-checkable vocabulary that
+// every supported country's tax codes map onto (see the TaxCode model
+// comment). OTHER exists as an escape hatch for a tax type not yet named
+// here, so onboarding a new country never requires a schema change first.
+enum TaxType {
+  GST
+  HST
+  VAT
+  SALES_TAX
+  OTHER
+}
+
+// How a TaxCode's rate should be applied. This phase only stores the
+// method — it does not implement the calculation itself (spec section 8).
+//  - STANDARD_RATE: the code's `rate` applies normally.
+//  - ZERO_RATE: taxable, but at 0% (e.g. many exports) — still reportable,
+//    distinct from EXEMPT.
+//  - EXEMPT: not subject to this tax at all.
+//  - OUT_OF_SCOPE: outside the tax system entirely (e.g. some
+//    non-business transactions).
+enum CalculationMethod {
+  STANDARD_RATE
+  ZERO_RATE
+  EXEMPT
+  OUT_OF_SCOPE
 }
 
 // ------------------------------
@@ -186,6 +220,7 @@ model Company {
   fiscalYears       FiscalYear[]
   accountingPeriods AccountingPeriod[]
   accounts          Account[]
+  taxCodes          TaxCode[]
 
   @@index([organizationId])
   @@index([countryConfigurationId])
@@ -349,4 +384,74 @@ model CountryConfiguration {
   companies Company[]
 
   @@map("country_configurations")
+}
+
+// ------------------------------
+// Tax Codes (Phase 3B-1 — database foundation only, no UI, no calculation
+// engine yet)
+// ------------------------------
+
+// A single tax code belonging to a Company (e.g. "HST-ON" / 13% / HST for a
+// Canadian company, or "STD" / 20% / VAT for a UK company). This phase only
+// establishes the model and its constraints — no tax calculation, filing,
+// returns, AI tax decisions, account mapping, or journal entries read/write
+// it yet.
+//
+// countryCode is a plain ISO 3166-1 alpha-2 string (matching the pattern
+// already used by Company.country) rather than a required FK to
+// CountryConfiguration — the same country can have several tax regimes
+// (e.g. Canada: federal GST plus per-province HST/PST), so "which country"
+// and "which CountryConfiguration row is currently configured" are kept as
+// separate concerns. No rates are seeded or hard-coded anywhere in this
+// phase (spec section 5) — every TaxCode row is explicitly created with
+// whatever rate/name/method the caller supplies. See
+// src/tax/country-tax-guidance.ts for the (non-binding) suggested TaxType
+// per supported country used to drive a future "add tax code" form.
+model TaxCode {
+  id        String @id @default(cuid())
+  companyId String
+
+  // ISO 3166-1 alpha-2, e.g. "CA", "US", "GB", "AU" — see the model comment
+  // above for why this isn't a required FK.
+  countryCode String
+
+  code String
+  name String
+
+  taxType           TaxType
+  calculationMethod CalculationMethod
+
+  // Percentage rate (e.g. 13.0000 for 13%), stored with enough precision
+  // for real-world sub-percent tax rates. Application code (src/tax/tax-
+  // codes.ts) enforces the one basic invariant this phase cares about —
+  // ZERO_RATE/EXEMPT/OUT_OF_SCOPE codes must be 0, STANDARD_RATE codes must
+  // be > 0 — but does not otherwise calculate or apply tax with it yet.
+  rate Decimal @db.Decimal(7, 4)
+
+  // Whether the tax this code represents can be recovered/claimed back as
+  // an input tax credit (true for most GST/HST/VAT on business purchases,
+  // typically false for e.g. US sales tax paid by the end consumer). Purely
+  // descriptive metadata in this phase — nothing yet reads it to affect a
+  // calculation.
+  isRecoverable Boolean @default(true)
+
+  // Inactive tax codes are hidden from normal selection lists but are never
+  // deleted, same rationale as Account.isActive: historical transactions
+  // that reference a tax code (once that exists in a later phase) must
+  // keep working.
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Tax code must be unique within a company, but the same code (e.g.
+  // "STD") is allowed to repeat across different companies — same pattern
+  // as Account.code.
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@index([companyId, countryCode])
+  @@index([companyId, taxType])
+  @@map("tax_codes")
 }

@@ -105,7 +105,7 @@ src/
     dashboard/         Protected app shell + all modules
     api/auth/          NextAuth route handler
   actions/             Server actions (e.g. company creation, fiscal years,
-                       accounting periods)
+                       accounting periods, chart of accounts, tax codes)
   components/
     ui/                Small shadcn-style primitives (Button, Card, Table…)
     dashboard/          Sidebar, topbar, stat cards, placeholder page
@@ -113,13 +113,16 @@ src/
     auth/               Login form
   lib/                 auth.ts, session.ts (org scoping), prisma.ts, rbac.ts,
                        validations.ts, nav.ts, utils.ts
-  accounting/          Fiscal year / accounting period business logic
-                       (backend only — see accounting/README.md)
-  ai/ banking/ reports/ tax/ integrations/
+  accounting/          Fiscal year / accounting period / chart of accounts
+                       business logic (backend only — see
+                       accounting/README.md)
+  tax/                 Tax code business logic (backend only, Phase 3B-1 —
+                       see tax/README.md)
+  ai/ banking/ reports/ integrations/
                        Empty placeholders for future-phase modules
 prisma/
   schema.prisma        User, Organization, Membership, Company, Country,
-                       FiscalYear, AccountingPeriod
+                       FiscalYear, AccountingPeriod, Account, TaxCode
   seed.ts              Seeds countries + first admin user/org
 ```
 
@@ -148,3 +151,19 @@ and an Activate/Deactivate action — all built on the existing design
 system (Table, Dialog, Select, Badge, Toast, EmptyState) and the Phase
 3A-1 backend/actions layer. No tax, account mapping, journal entries,
 transactions, general ledger, reports, or AI — still out of scope.
+
+## Phase 3B-1 scope
+
+Added the `TaxCode` model (flexible, country-aware tax code database
+foundation covering Canada, United States, United Kingdom, and Australia)
+and backend logic in `src/tax/tax-codes.ts`: create/update/list/get,
+company isolation (User → Organization → Company → TaxCode, same pattern
+as `src/accounting/access.ts`), unique code per company, and
+activate/deactivate (tax codes are never deleted). `TaxType`
+(GST/HST/VAT/SALES_TAX/OTHER) and `CalculationMethod`
+(STANDARD_RATE/ZERO_RATE/EXEMPT/OUT_OF_SCOPE) are enums; the only
+calculation-adjacent logic is a data-integrity check that a code's rate is
+0 for ZERO_RATE/EXEMPT/OUT_OF_SCOPE and greater than 0 for STANDARD_RATE —
+no actual tax calculation, filing, returns, AI tax decisions, account
+mapping, or journal entries. No rates are seeded or hard-coded anywhere.
+Backend only — no UI yet.

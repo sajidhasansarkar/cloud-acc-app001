@@ -136,6 +136,50 @@ export const periodStatusSchema = z.enum(["OPEN", "CLOSED", "LOCKED"]);
 export type PeriodStatusInput = z.infer<typeof periodStatusSchema>;
 
 // ------------------------------
+// Tax Codes (Phase 3B-1)
+// ------------------------------
+
+export const taxTypeSchema = z.enum(["GST", "HST", "VAT", "SALES_TAX", "OTHER"]);
+export type TaxTypeInput = z.infer<typeof taxTypeSchema>;
+
+export const calculationMethodSchema = z.enum([
+  "STANDARD_RATE",
+  "ZERO_RATE",
+  "EXEMPT",
+  "OUT_OF_SCOPE",
+]);
+export type CalculationMethodInput = z.infer<typeof calculationMethodSchema>;
+
+// Rate is a percentage (e.g. 13 for 13%). Accepts a number or a numeric
+// string (form inputs arrive as strings) and coerces to a number; the
+// rate/calculationMethod consistency check (0 for ZERO_RATE/EXEMPT/
+// OUT_OF_SCOPE, >0 for STANDARD_RATE) is enforced in
+// src/tax/tax-codes.ts, not here, since it depends on another field.
+const taxRateSchema = z.coerce
+  .number({ invalid_type_error: "Rate must be a number" })
+  .min(0, "Rate cannot be negative")
+  .max(100, "Rate cannot exceed 100");
+
+const taxCodeBaseSchema = {
+  companyId: z.string().trim().min(1, "companyId is required"),
+  countryCode: z.string().trim().length(2, "Select a country"),
+  code: z.string().trim().min(1, "Tax code is required").max(20),
+  name: z.string().trim().min(1, "Tax code name is required").max(120),
+  taxType: taxTypeSchema,
+  calculationMethod: calculationMethodSchema,
+  rate: taxRateSchema,
+  isRecoverable: z.boolean().default(true),
+};
+
+export const createTaxCodeSchema = z.object(taxCodeBaseSchema);
+export type CreateTaxCodeInput = z.infer<typeof createTaxCodeSchema>;
+
+export const updateTaxCodeSchema = z.object(taxCodeBaseSchema);
+export type UpdateTaxCodeInput = z.infer<typeof updateTaxCodeSchema>;
+
+export type TaxCodeFieldErrors = Partial<Record<keyof CreateTaxCodeInput, string>>;
+
+// ------------------------------
 // Company Settings — Accounting tab (Phase 2B-2B-2)
 // ------------------------------
 
