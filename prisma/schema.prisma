@@ -804,8 +804,8 @@ model AIReviewRecord {
   createdBy   User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
   reviewedBy  User? @relation("AIReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
   humanAccount Account? @relation("AIHumanAccount", fields: [humanAccountId], references: [id], onDelete: SetNull)
-  suggestions AIReviewSuggestion[]
-  audits      AIReviewAudit[]
+  suggestions   AIReviewSuggestion[]
+  audits        AIReviewAudit[]
 
   @@index([status, createdAt])
   @@index([decision, reviewedAt])
@@ -831,7 +831,7 @@ model AIReviewSuggestion {
   candidate        NormalizedTransactionCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   suggestedAccount Account? @relation("AISuggestedAccount", fields: [suggestedAccountId], references: [id], onDelete: SetNull)
   audits           AIReviewAudit[]
-  reviewRecord     AIReviewRecord?
+  reviewRecord     AIReviewRecord? @relation(fields: [candidateId], references: [candidateId])
 
   @@index([candidateId, createdAt])
   @@index([suggestedAccountId])
@@ -852,7 +852,7 @@ model AIReviewAudit {
 
   candidate  NormalizedTransactionCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   suggestion AIReviewSuggestion? @relation(fields: [suggestionId], references: [id], onDelete: SetNull)
-  reviewRecord AIReviewRecord?
+  reviewRecord AIReviewRecord? @relation(fields: [candidateId], references: [candidateId])
   user       User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([candidateId, createdAt])
