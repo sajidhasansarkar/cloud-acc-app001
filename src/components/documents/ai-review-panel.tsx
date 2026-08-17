@@ -215,7 +215,7 @@ export function AIReviewPanel({
 
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen} title="Reject AI Suggestion" description="The normalized source data will remain unchanged.">
         <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Optional review note" />
-        <div className="mt-4 flex justify-end gap-2"><Button variant="outline" onClick={() => setRejectOpen(false)}>Cancel</Button><Button variant="danger" disabled={pending} onClick={reject}>Reject</Button></div>
+        <div className="mt-4 flex justify-end gap-2"><Button variant="outline" onClick={() => setRejectOpen(false)}>Cancel</Button><Button variant="destructive" disabled={pending} onClick={reject}>Reject</Button></div>
       </Dialog>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen} title="Edit AI Suggestion" description="This creates a human override while preserving the original AI suggestion and audit history.">
