@@ -20,9 +20,13 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 export function AccountViewDialog({
   account,
   parentAccount,
+  childAccounts = [],
 }: {
   account: Account;
   parentAccount: Account | null;
+  /** Direct children only (not the whole subtree) — spec section 5 asks
+   * for "Children" as a details field, not a nested tree here. */
+  childAccounts?: Account[];
 }) {
   const [open, setOpen] = useState(false);
 
@@ -51,15 +55,35 @@ export function AccountViewDialog({
           <Field label="Account Type" value={ACCOUNT_TYPE_LABELS[account.type as AccountType]} />
           <Field label="Subtype" value={account.subtype || "—"} />
           <Field label="Parent Account" value={parentAccount ? `${parentAccount.code} — ${parentAccount.name}` : "None (top-level)"} />
+          <Field label="System Account" value={account.isSystemAccount ? "Yes" : "No"} />
           <Field label="Created" value={formatDate(account.createdAt)} />
           <Field label="Last Updated" value={formatDate(account.updatedAt)} />
         </div>
         <div className="mt-4">
           <Field label="Description" value={account.description || "—"} />
         </div>
+        <div className="mt-4">
+          <Field
+            label={`Children (${childAccounts.length})`}
+            value={
+              childAccounts.length > 0 ? (
+                <ul className="space-y-0.5">
+                  {childAccounts.map((child) => (
+                    <li key={child.id}>
+                      {child.code} — {child.name}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                "None"
+              )
+            }
+          />
+        </div>
         {account.isSystemAccount ? (
           <p className="mt-4 text-xs text-ink-500">
-            This is a system account used internally by the platform.
+            This is a system account used internally by the platform. Its type, code, and
+            retirement are protected in later phases.
           </p>
         ) : null}
       </Dialog>

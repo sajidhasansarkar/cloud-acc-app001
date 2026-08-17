@@ -52,6 +52,27 @@ export const ACCOUNT_STATUS_LABELS: Record<AccountStatus, string> = {
   INACTIVE: "Inactive",
 };
 
+// ------------------------------
+// Chart of Accounts — tree, search, filter, sort (Phase 3A-3)
+// ------------------------------
+
+// Sibling ordering within the account tree / flat list. Mirrors the
+// COMPANY_SORT_OPTIONS pattern below: a single ordered list drives the
+// <Select>, and its `value` union is the type the sorting/query code keys
+// off of.
+export const ACCOUNT_SORT_OPTIONS = [
+  { value: "code_asc", label: "Code (A–Z)" },
+  { value: "code_desc", label: "Code (Z–A)" },
+  { value: "name_asc", label: "Name (A–Z)" },
+  { value: "name_desc", label: "Name (Z–A)" },
+  { value: "createdAt_desc", label: "Created (newest)" },
+  { value: "createdAt_asc", label: "Created (oldest)" },
+] as const;
+
+export type AccountSortKey = (typeof ACCOUNT_SORT_OPTIONS)[number]["value"];
+
+export const DEFAULT_ACCOUNT_SORT: AccountSortKey = "code_asc";
+
 export const COMPANY_SORT_OPTIONS = [
   { value: "createdAt_desc", label: "Newest first" },
   { value: "createdAt_asc", label: "Oldest first" },

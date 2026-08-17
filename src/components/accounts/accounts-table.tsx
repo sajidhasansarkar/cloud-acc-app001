@@ -18,15 +18,30 @@ import type { Account, AccountType } from "@prisma/client";
 export function AccountsTable({
   companyId,
   accounts,
+  allAccounts,
   canManage,
 }: {
   companyId: string;
+  /** Rows to render — may be a filtered/sorted subset of the company's
+   * accounts (Phase 3A-3 search & filters). */
   accounts: Account[];
+  /** Full, unfiltered account list for this company, used to resolve
+   * parent/children names even when `accounts` is a filtered subset.
+   * Defaults to `accounts` for callers that pass the full list. */
+  allAccounts?: Account[];
   canManage: boolean;
 }) {
+  const lookupSet = allAccounts ?? accounts;
   // Built once per render for O(1) parent-name lookups instead of an
   // Array.find() per row.
-  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const byId = new Map(lookupSet.map((a) => [a.id, a]));
+  const childrenByParent = new Map<string, Account[]>();
+  for (const a of lookupSet) {
+    if (!a.parentAccountId) continue;
+    const bucket = childrenByParent.get(a.parentAccountId);
+    if (bucket) bucket.push(a);
+    else childrenByParent.set(a.parentAccountId, [a]);
+  }
 
   return (
     <Table>
@@ -58,10 +73,14 @@ export function AccountsTable({
               </TableCell>
               <TableCell>
                 <div className="flex items-center justify-end gap-1">
-                  <AccountViewDialog account={account} parentAccount={parent} />
+                  <AccountViewDialog
+                    account={account}
+                    parentAccount={parent}
+                    childAccounts={childrenByParent.get(account.id) ?? []}
+                  />
                   {canManage ? (
                     <>
-                      <AccountFormDialog mode="edit" companyId={companyId} account={account} accounts={accounts} />
+                      <AccountFormDialog mode="edit" companyId={companyId} account={account} accounts={lookupSet} />
                       <AccountStatusAction
                         companyId={companyId}
                         accountId={account.id}
