@@ -15,7 +15,9 @@ import { TAX_TYPE_LABELS, TAX_COUNTRIES } from "@/lib/constants";
 import type { SerializedTaxCode } from "@/components/tax/types";
 import type { TaxType } from "@prisma/client";
 
-const COUNTRY_NAME_BY_CODE = new Map(TAX_COUNTRIES.map((c) => [c.countryCode, c.countryName]));
+const COUNTRY_NAME_BY_CODE = new Map<string, string>(
+  TAX_COUNTRIES.map((c) => [c.countryCode, c.countryName])
+);
 
 function formatRate(rate: number): string {
   // Trim trailing zeros from the stored Decimal(7,4) without losing a
