@@ -17,6 +17,7 @@ import {
   deleteJournalEntry,
   updateJournalEntryHeader,
   updateJournalEntry,
+  validateJournalEntryBalance,
   type JournalEntryResult,
 } from "@/accounting/journal-entries";
 import type { JournalEntry, JournalEntryLine, JournalEntrySourceType } from "@prisma/client";
@@ -181,6 +182,24 @@ export async function updateJournalEntryAction(
   }
 
   return result;
+}
+
+
+export async function validateJournalEntryBalanceAction(companyId: string, journalEntryId: string) {
+  const { organization } = await requireActiveOrganization();
+  const entry = await getJournalEntry(organization.id, companyId, journalEntryId);
+  if (!entry) {
+    return { ok: false as const, error: "Journal entry not found." };
+  }
+
+  const balance = await validateJournalEntryBalance(journalEntryId);
+  return {
+    ok: true as const,
+    balanced: balance.balanced,
+    totalDebit: balance.totalDebit.toFixed(4),
+    totalCredit: balance.totalCredit.toFixed(4),
+    difference: balance.difference.toFixed(4),
+  };
 }
 
 export async function postJournalEntryAction(

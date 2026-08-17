@@ -19,7 +19,7 @@ import {
  * two pieces of reusable server-side validation the spec asks for so a
  * later UI (Phase 4A-3) doesn't have to reimplement them:
  *  - validateEntryDateInPeriod (spec section 7)
- *  - calculateEntryTotals / isEntryBalanced (spec section 9)
+ *  - calculateEntryTotals / validateJournalEntryBalance / isEntryBalanced (spec section 9)
  */
 
 export type JournalEntryResult =
@@ -121,6 +121,34 @@ export function isEntryBalanced(lines: { debit: Prisma.Decimal.Value; credit: Pr
 }
 
 /**
+ * Reusable database-backed balance calculation for a journal entry.
+ *
+ * The caller must have already established that the journalEntryId belongs
+ * to the current organization/company (the UI does this through
+ * getOwnedJournalEntry). The calculation itself always uses Prisma.Decimal.
+ */
+export async function validateJournalEntryBalance(journalEntryId: string): Promise<{
+  balanced: boolean;
+  totalDebit: Prisma.Decimal;
+  totalCredit: Prisma.Decimal;
+  difference: Prisma.Decimal;
+}> {
+  const lines = await prisma.journalEntryLine.findMany({
+    where: { journalEntryId },
+    select: { debit: true, credit: true },
+    orderBy: { lineNumber: "asc" },
+  });
+
+  const { totalDebit, totalCredit } = calculateEntryTotals(lines);
+  return {
+    balanced: totalDebit.equals(totalCredit),
+    totalDebit,
+    totalCredit,
+    difference: totalDebit.minus(totalCredit),
+  };
+}
+
+/**
  * Validates one journal entry line in isolation:
  *  - debit / credit must each be >= 0 (spec section 8 — no negative
  *    amounts; a "negative" amount is represented by using the opposite
@@ -141,10 +169,10 @@ function validateLineAmounts(line: JournalEntryLineInput): { ok: true } | { ok: 
   const credit = new Prisma.Decimal(line.credit);
 
   if (debit.isNegative() || credit.isNegative()) {
-    return { ok: false, error: "Debit and credit amounts cannot be negative." };
+    return { ok: false, error: "Amount cannot be negative." };
   }
   if (!debit.isZero() && !credit.isZero()) {
-    return { ok: false, error: "A single line cannot have both a debit and a credit amount." };
+    return { ok: false, error: "Debit and Credit cannot both contain values." };
   }
   return { ok: true };
 }

@@ -3,13 +3,14 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, Pencil, ListChecks } from "lucide-react";
 import { requireActiveOrganization } from "@/lib/session";
 import { requireOwnedCompany } from "@/lib/company-guard";
-import { getJournalEntry, calculateEntryTotals } from "@/accounting/journal-entries";
+import { getJournalEntry, validateJournalEntryBalance } from "@/accounting/journal-entries";
 import { canManageJournalEntries } from "@/lib/rbac";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { JournalEntryStatusBadge } from "@/components/journal-entries/journal-entry-status-badge";
+import { JournalEntryBalanceSummary } from "@/components/journal-entries/journal-entry-balance-summary";
 import { JOURNAL_ENTRY_SOURCE_TYPE_LABELS } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
 import type { JournalEntrySourceType } from "@prisma/client";
@@ -44,11 +45,23 @@ export default async function JournalEntryDetailPage({
   }
 
   const canManage = canManageJournalEntries(role);
-  // Reuses the same Decimal-based summation the create/update paths use
-  // (spec section 8 — no floating-point math), just to display totals;
-  // this is not the balance validation deferred to a later phase (spec
-  // section 17 — no posting/balance gate is applied here).
-  const { totalDebit, totalCredit } = calculateEntryTotals(entry.lines);
+  // The balance summary is calculated from the persisted journal lines with
+  // Prisma.Decimal. No display value is derived from JavaScript Number.
+  const balance = await validateJournalEntryBalance(entry.id);
+  const validLineCount = entry.lines.filter((line) =>
+    (line.debit.gt(0) ? 1 : 0) + (line.credit.gt(0) ? 1 : 0) === 1
+  ).length;
+  const structurallyValid = validLineCount >= 2;
+  const balanced = structurallyValid && balance.balanced;
+  const balanceMessage = balanced
+    ? null
+    : !structurallyValid
+      ? "At least two valid journal lines are required."
+      : balance.difference.gt(0)
+        ? "Debit exceeds Credit"
+        : balance.difference.lt(0)
+          ? "Credit exceeds Debit"
+          : "Journal entry is not balanced.";
 
   return (
     <div className="space-y-6">
@@ -101,7 +114,7 @@ export default async function JournalEntryDetailPage({
       <Card>
         <CardHeader>
           <CardTitle>Journal Lines</CardTitle>
-          <CardDescription>Balance and posting validation are added in a later phase.</CardDescription>
+          <CardDescription>Journal line amounts and current balance validation.</CardDescription>
         </CardHeader>
         <CardContent>
           {entry.lines.length === 0 ? (
@@ -131,25 +144,27 @@ export default async function JournalEntryDetailPage({
                       <TableCell className="text-ink-700">{line.description || "—"}</TableCell>
                       <TableCell className="text-ink-700">{line.reference || "—"}</TableCell>
                       <TableCell className="text-right font-mono text-ink-800">
-                        {Number(line.debit) > 0 ? line.debit.toFixed(2) : "—"}
+                        {line.debit.gt(0) ? line.debit.toFixed(2) : "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono text-ink-800">
-                        {Number(line.credit) > 0 ? line.credit.toFixed(2) : "—"}
+                        {line.credit.gt(0) ? line.credit.toFixed(2) : "—"}
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
-              <div className="flex items-center justify-end gap-6 border-t border-ink-100 bg-surface-muted px-4 py-2 text-sm">
-                <span className="text-ink-500">
-                  Total Debit: <span className="font-mono text-ink-800">{totalDebit.toFixed(2)}</span>
-                </span>
-                <span className="text-ink-500">
-                  Total Credit: <span className="font-mono text-ink-800">{totalCredit.toFixed(2)}</span>
-                </span>
-              </div>
             </div>
           )}
+
+          <div className="mt-4">
+            <JournalEntryBalanceSummary
+              totalDebit={balance.totalDebit.toFixed(4)}
+              totalCredit={balance.totalCredit.toFixed(4)}
+              difference={balance.difference.toFixed(4)}
+              balanced={balanced}
+              validationMessage={balanceMessage}
+            />
+          </div>
         </CardContent>
       </Card>
     </div>

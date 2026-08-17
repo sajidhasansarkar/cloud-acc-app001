@@ -9,19 +9,23 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AccountPicker } from "@/components/journal-entries/account-picker";
 import { cn } from "@/lib/utils";
+import {
+  compareDecimalStrings,
+  isNegativeDecimal,
+  isPositiveDecimal,
+  subtractDecimalStrings,
+  sumDecimalStrings,
+} from "@/lib/journal-entry-balance";
+import { JournalEntryBalanceSummary } from "@/components/journal-entries/journal-entry-balance-summary";
 import type { Account } from "@prisma/client";
 
 /**
- * Journal Lines editor (Phase 4A-3A, spec sections 1-13).
+ * Journal Lines editor (Phase 4A-3B-1).
  *
- * UI-only: this component enforces the same-line "debit OR credit, not
- * both" rule and non-negative amounts client-side (spec section 9), but
- * does NOT enforce that lines are complete or that the entry balances —
- * both are explicitly deferred to Phase 4A-3B, and drafts must remain
- * saveable with no lines, incomplete lines, or unbalanced lines (spec
- * section 13). Every line's amounts still ultimately pass through
- * validateLineAmounts on the server (src/accounting/journal-entries.ts),
- * which is the real source of truth.
+ * Live totals use exact fixed-point client arithmetic for display. The
+ * authoritative persisted calculation still uses Prisma.Decimal on the
+ * server. Drafts remain saveable while empty, incomplete, or unbalanced;
+ * the UI reports the current validation state without implementing posting.
  */
 
 export type JournalLineDraft = {
@@ -54,34 +58,20 @@ export function newJournalLineDraft(): JournalLineDraft {
 }
 
 function isZeroOrEmpty(v: string) {
-  const n = Number(v);
-  return v.trim() === "" || !Number.isFinite(n) || n === 0;
+  return v.trim() === "" || compareDecimalStrings(v, "0") === 0;
 }
 
-// Sanitizes a numeric amount field: strips anything that isn't a digit or
-// a single decimal point, so a minus sign can never be typed in the first
-// place (spec sections 7-8: negative amounts not allowed). Kept as a
-// string throughout — see JournalLineDraft.debit/credit above.
+// Keeps the amount as text so the client never performs money arithmetic
+// with JavaScript Number. A leading minus is retained so pasted/typed
+// negative values can be surfaced with the required validation message.
 function sanitizeAmount(raw: string): string {
+  const negative = raw.trim().startsWith("-");
   let v = raw.replace(/[^0-9.]/g, "");
   const firstDot = v.indexOf(".");
   if (firstDot !== -1) {
     v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, "");
   }
-  return v;
-}
-
-// Decimal(19,4)-scaled integer summation so the displayed totals never
-// drift from repeated float addition (spec sections 7-8) — this is a
-// convenience running total for the editor only; the authoritative sum
-// is computed server-side with Prisma.Decimal.
-const SCALE = 10_000;
-function sumAmounts(values: string[]): string {
-  const totalScaled = values.reduce((acc, v) => {
-    const n = Number(v);
-    return acc + (Number.isFinite(n) ? Math.round(n * SCALE) : 0);
-  }, 0);
-  return (totalScaled / SCALE).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return negative ? `-${v}` : v;
 }
 
 export function JournalLinesEditor({
@@ -125,8 +115,39 @@ export function JournalLinesEditor({
     onChange(lines.filter((line) => line.key !== key));
   }
 
-  const totalDebit = sumAmounts(lines.map((l) => l.debit));
-  const totalCredit = sumAmounts(lines.map((l) => l.credit));
+  const totalDebit = sumDecimalStrings(lines.map((l) => l.debit));
+  const totalCredit = sumDecimalStrings(lines.map((l) => l.credit));
+  const difference = subtractDecimalStrings(totalDebit, totalCredit);
+
+  const lineErrors = lines.map((line) => {
+    const debitEntered = !isZeroOrEmpty(line.debit);
+    const creditEntered = !isZeroOrEmpty(line.credit);
+
+    if (isNegativeDecimal(line.debit) || isNegativeDecimal(line.credit)) {
+      return "Amount cannot be negative.";
+    }
+    if (debitEntered && creditEntered) {
+      return "Debit and Credit cannot both contain values.";
+    }
+    if (!debitEntered && !creditEntered) {
+      return "Debit or Credit amount is required.";
+    }
+    if (!line.accountId) {
+      return "Account is required.";
+    }
+    return null;
+  });
+  const validLineCount = lines.filter((line) => {
+    const debitEntered = isPositiveDecimal(line.debit);
+    const creditEntered = isPositiveDecimal(line.credit);
+    return Boolean(line.accountId) && (debitEntered !== creditEntered);
+  }).length;
+  const firstLineError = lineErrors.find(Boolean) ?? null;
+  const validationMessage = firstLineError ?? (validLineCount < 2 ? "At least two valid journal lines are required." : null);
+  const balanced = !validationMessage && compareDecimalStrings(difference, "0") === 0;
+  const balanceMessage = balanced
+    ? null
+    : validationMessage ?? (compareDecimalStrings(difference, "0") > 0 ? "Debit exceeds Credit" : "Credit exceeds Debit");
 
   return (
     <div className="space-y-3">
@@ -238,18 +259,10 @@ export function JournalLinesEditor({
                       </button>
                     </TableCell>
                   </TableRow>
-                  {bothEntered || incomplete ? (
+                  {lineErrors[index] ? (
                     <tr>
                       <td colSpan={7} className="px-4 pb-2 pt-0">
-                        {bothEntered ? (
-                          <p className="text-xs text-negative">
-                            A line can only have a debit or a credit amount, not both.
-                          </p>
-                        ) : (
-                          <p className="text-xs text-ink-400">
-                            Incomplete line — enter a debit or a credit amount.
-                          </p>
-                        )}
+                        <p className="text-xs text-negative">{lineErrors[index]}</p>
                       </td>
                     </tr>
                   ) : null}
@@ -259,12 +272,16 @@ export function JournalLinesEditor({
             </TableBody>
           </Table>
 
-          <div className="flex items-center justify-end gap-6 border-t border-ink-100 bg-surface-muted px-4 py-2 text-sm">
-            <span className="text-ink-500">Total Debit: <span className="font-mono text-ink-800">{totalDebit}</span></span>
-            <span className="text-ink-500">Total Credit: <span className="font-mono text-ink-800">{totalCredit}</span></span>
-          </div>
         </div>
       )}
+
+      <JournalEntryBalanceSummary
+        totalDebit={totalDebit}
+        totalCredit={totalCredit}
+        difference={difference}
+        balanced={balanced}
+        validationMessage={balanceMessage}
+      />
     </div>
   );
 }
