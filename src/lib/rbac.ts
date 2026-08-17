@@ -75,3 +75,10 @@ export function canManageMembers(role: Role) {
 export function isAdmin(role: Role) {
   return role === "ADMIN";
 }
+
+// AI transaction review is a human-review capability. Reviewers may review
+// and accept/reject/edit suggestions, but this capability never creates or
+// posts Journal Entries.
+export function canReviewAI(role: Role) {
+  return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT" || role === "REVIEWER";
+}

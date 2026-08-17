@@ -938,8 +938,27 @@ export async function setJournalEntryStatus(
   return { ok: true, entry };
 }
 
-export const postJournalEntry = (organizationId: string, companyId: string, journalEntryId: string) =>
-  setJournalEntryStatus(organizationId, companyId, journalEntryId, "POSTED");
+export async function postJournalEntry(
+  organizationId: string,
+  companyId: string,
+  journalEntryId: string
+): Promise<JournalEntryResult> {
+  const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
+  if (!existing) {
+    return { ok: false, error: "Journal entry not found." };
+  }
+
+  if (existing.status !== "DRAFT") {
+    return { ok: false, error: `Cannot change a ${existing.status} entry to POSTED.` };
+  }
+
+  const validation = await validateJournalEntryForPosting(organizationId, journalEntryId);
+  if (!validation.ok) {
+    return validation;
+  }
+
+  return setJournalEntryStatus(organizationId, companyId, journalEntryId, "POSTED");
+}
 
 export const voidJournalEntry = (organizationId: string, companyId: string, journalEntryId: string) =>
   setJournalEntryStatus(organizationId, companyId, journalEntryId, "VOID");

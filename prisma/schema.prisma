@@ -194,6 +194,35 @@ enum DocumentFileType {
   WEBP
 }
 
+enum NormalizationConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum AIReviewStatus {
+  NOT_REVIEWED
+  READY
+  REVIEWING
+  REVIEWED
+  NEEDS_HUMAN_REVIEW
+  FAILED
+}
+
+enum AIReviewDecision {
+  ACCEPTED
+  REJECTED
+  EDITED
+}
+
+enum AIReviewAuditAction {
+  GENERATED
+  ACCEPTED
+  REJECTED
+  EDITED
+  FAILED
+}
+
 // ------------------------------
 // Auth / Identity
 // ------------------------------
@@ -218,6 +247,10 @@ model User {
   // createdById is displayed (see JournalEntry.createdBy comment below).
   journalEntriesCreated JournalEntry[]
   documentsUploaded Document[]
+  normalizedCandidatesCorrected NormalizedTransactionCandidate[] @relation("CandidateCorrections")
+  aiReviewRecords AIReviewRecord[]
+  aiReviewAudits AIReviewAudit[]
+  aiReviewedRecords AIReviewRecord[] @relation("AIReviewedBy")
 
   @@map("users")
 }
@@ -233,6 +266,7 @@ model Organization {
   memberships Membership[]
   companies   Company[]
   documents   Document[]
+  normalizedCandidates NormalizedTransactionCandidate[]
 
   @@map("organizations")
 }
@@ -309,6 +343,7 @@ model Company {
   accountMappings   AccountMapping[]
   journalEntries    JournalEntry[]
   documents         Document[]
+  normalizedCandidates NormalizedTransactionCandidate[]
 
   @@index([organizationId])
   @@index([countryConfigurationId])
@@ -380,6 +415,8 @@ model Account {
   // is never deleted (isActive above), so this relation doesn't need an
   // onDelete action either — nothing here cascades.
   journalEntryLines JournalEntryLine[]
+  aiSuggestedReviews AIReviewSuggestion[] @relation("AISuggestedAccount")
+  aiHumanReviewRecords AIReviewRecord[] @relation("AIHumanAccount")
 
   // Account code must be unique within a company, but the same code (e.g.
   // "1000") is allowed to repeat across different companies.
@@ -681,6 +718,7 @@ model Document {
   updatedAt        DateTime       @updatedAt
 
   processingResult DocumentProcessingResult?
+  normalizedCandidates NormalizedTransactionCandidate[]
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -690,6 +728,134 @@ model Document {
   @@index([companyId, documentStatus])
   @@index([uploadedById])
   @@map("documents")
+}
+
+model NormalizedTransactionCandidate {
+  id                  String                   @id @default(cuid())
+  documentId          String
+  organizationId      String
+  companyId           String
+  sourceRowReference  String
+  sourceSheetName     String?
+  sourcePageNumber    Int?
+  sourceRowNumber     Int?
+  date                DateTime?
+  dateConfidence      NormalizationConfidence @default(LOW)
+  description         String?
+  descriptionConfidence NormalizationConfidence @default(LOW)
+  reference           String?
+  referenceConfidence NormalizationConfidence @default(LOW)
+  debit               Decimal?                 @db.Decimal(20,4)
+  credit              Decimal?                 @db.Decimal(20,4)
+  amount              Decimal?                 @db.Decimal(20,4)
+  balance             Decimal?                 @db.Decimal(20,4)
+  currency            String?
+  currencyConfidence  NormalizationConfidence @default(LOW)
+  transactionType     String?
+  confidence          NormalizationConfidence @default(LOW)
+  warnings            Json
+  possibleDuplicate   Boolean                  @default(false)
+  ignored             Boolean                  @default(false)
+  manuallyCorrected   Boolean                  @default(false)
+  correctedById       String?
+  correctedAt         DateTime?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  correctedBy User? @relation("CandidateCorrections", fields: [correctedById], references: [id], onDelete: SetNull)
+  aiReview AIReviewRecord?
+  aiReviewSuggestions AIReviewSuggestion[]
+  aiReviewAudits AIReviewAudit[]
+
+  @@unique([documentId, sourceRowReference])
+  @@index([organizationId, companyId, documentId])
+  @@index([companyId, possibleDuplicate])
+  @@index([documentId, createdAt])
+  @@map("normalized_transaction_candidates")
+}
+
+// AI Review foundation (Phase 4B-4). One minimal audit record per normalized
+// candidate. This does not store prompts, API keys, source binaries, or AI
+// suggestions. It only records readiness/review lifecycle metadata so a later
+// AI phase can remain auditable without duplicating source data.
+model AIReviewRecord {
+  id             String          @id @default(cuid())
+  candidateId    String          @unique
+  status         AIReviewStatus  @default(NOT_REVIEWED)
+  decision       AIReviewDecision?
+  provider       String?
+  model          String?
+  contextVersion String          @default("v1")
+  createdById    String?
+  reviewedById   String?
+  reviewedAt    DateTime?
+  humanAccountId String?
+  humanDebit     Decimal?        @db.Decimal(20,4)
+  humanCredit    Decimal?        @db.Decimal(20,4)
+  humanAmount    Decimal?        @db.Decimal(20,4)
+  humanNotes     String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  candidate   NormalizedTransactionCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  createdBy   User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  reviewedBy  User? @relation("AIReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  humanAccount Account? @relation("AIHumanAccount", fields: [humanAccountId], references: [id], onDelete: SetNull)
+  suggestions AIReviewSuggestion[]
+  audits      AIReviewAudit[]
+
+  @@index([status, createdAt])
+  @@index([decision, reviewedAt])
+  @@map("ai_review_records")
+}
+
+model AIReviewSuggestion {
+  id                  String                @id @default(cuid())
+  candidateId         String
+  provider            String
+  model               String?
+  contextVersion      String
+  suggestedAccountId  String?
+  suggestedDebit      Decimal?              @db.Decimal(20,4)
+  suggestedCredit     Decimal?              @db.Decimal(20,4)
+  suggestedAmount     Decimal?              @db.Decimal(20,4)
+  explanation         String
+  confidence          NormalizationConfidence
+  warnings            Json
+  alternatives        Json
+  createdAt           DateTime              @default(now())
+
+  candidate        NormalizedTransactionCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  suggestedAccount Account? @relation("AISuggestedAccount", fields: [suggestedAccountId], references: [id], onDelete: SetNull)
+  audits           AIReviewAudit[]
+
+  @@index([candidateId, createdAt])
+  @@index([suggestedAccountId])
+  @@map("ai_review_suggestions")
+}
+
+model AIReviewAudit {
+  id             String              @id @default(cuid())
+  candidateId    String
+  suggestionId   String?
+  action         AIReviewAuditAction
+  provider       String?
+  model          String?
+  contextVersion String?
+  confidence     NormalizationConfidence?
+  userId         String?
+  createdAt      DateTime            @default(now())
+
+  candidate  NormalizedTransactionCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  suggestion AIReviewSuggestion? @relation(fields: [suggestionId], references: [id], onDelete: SetNull)
+  user       User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([candidateId, createdAt])
+  @@index([action, createdAt])
+  @@map("ai_review_audits")
 }
 
 // ------------------------------

@@ -10,7 +10,7 @@ export async function listDocuments(organizationId: string, companyId: string) {
     select: {
       id: true, originalFileName: true, fileType: true, fileSize: true, documentStatus: true, createdAt: true,
       uploadedBy: { select: { name: true } },
-      processingResult: { select: { pageCount: true, sheetCount: true, rowCount: true, columnCount: true, requiresOcr: true, processingError: true, processedAt: true } },
+      processingResult: { select: { pageCount: true, sheetCount: true, rowCount: true, columnCount: true, requiresOcr: true, processingError: true, processedAt: true, extractedContentReference: true } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -29,7 +29,7 @@ export async function getOwnedDocumentDetails(organizationId: string, companyId:
     select: {
       id: true, originalFileName: true, fileType: true, mimeType: true, fileSize: true, documentStatus: true, createdAt: true, updatedAt: true,
       uploadedBy: { select: { name: true } },
-      processingResult: { select: { pageCount: true, sheetCount: true, rowCount: true, columnCount: true, requiresOcr: true, processingError: true, processedAt: true } },
+      processingResult: { select: { pageCount: true, sheetCount: true, rowCount: true, columnCount: true, requiresOcr: true, processingError: true, processedAt: true, extractedContentReference: true } },
     },
   });
 }
@@ -54,6 +54,69 @@ export async function createDocument(organizationId: string, companyId: string, 
     try { await storage.delete(storageKey); } catch { /* best effort */ }
     console.error("Document upload failed", error);
     return { ok: false as const, error: "Upload failed. Please try again." };
+  }
+}
+
+export async function finalizeUploadedDocument(
+  organizationId: string,
+  companyId: string,
+  uploadedById: string,
+  storageKey: string,
+  originalFileName: string,
+  mimeType: string
+) {
+  const company = await getOwnedCompany(organizationId, companyId);
+  if (!company) return { ok: false as const, error: "Company not found." };
+
+  const expectedPrefix = `documents/${companyId}/`;
+  if (!storageKey.startsWith(expectedPrefix) || storageKey.includes("..") || storageKey.includes("\\")) {
+    return { ok: false as const, error: "Invalid storage key." };
+  }
+
+  const existing = await prisma.document.findUnique({ where: { storageKey }, select: { id: true } });
+  if (existing) return { ok: false as const, error: "This upload has already been finalized." };
+
+  const storage = getDocumentStorage();
+  try {
+    const buffer = await storage.read(storageKey);
+    const file = new File([buffer], originalFileName.trim(), { type: mimeType.toLowerCase() });
+    const validation = await validateDocumentFile(file);
+    if (!validation.ok) {
+      await storage.delete(storageKey);
+      return validation;
+    }
+
+    const documentId = randomUUID();
+    const document = await prisma.document.create({
+      data: {
+        id: documentId,
+        organizationId,
+        companyId: company.id,
+        uploadedById,
+        originalFileName: file.name,
+        fileType: validation.fileType,
+        mimeType: validation.mimeType,
+        fileSize: BigInt(file.size),
+        storageKey,
+        documentStatus: "UPLOADED",
+      },
+      select: {
+        id: true,
+        originalFileName: true,
+        fileType: true,
+        mimeType: true,
+        fileSize: true,
+        documentStatus: true,
+        createdAt: true,
+        uploadedBy: { select: { name: true } },
+      },
+    });
+
+    return { ok: true as const, document };
+  } catch (error) {
+    try { await storage.delete(storageKey); } catch { /* best effort */ }
+    console.error("Document upload finalization failed", error);
+    return { ok: false as const, error: "Upload finalization failed. Please try again." };
   }
 }
 

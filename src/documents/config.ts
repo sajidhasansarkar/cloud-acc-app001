@@ -1,5 +1,7 @@
 export const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024;
 export const DOCUMENT_STORAGE_PROVIDER = process.env.DOCUMENT_STORAGE_PROVIDER ?? "local";
+export const DOCUMENT_STORAGE_PROVIDERS = ["local", "vercel-blob"] as const;
+export type DocumentStorageProvider = (typeof DOCUMENT_STORAGE_PROVIDERS)[number];
 export const DOCUMENT_STORAGE_LOCAL_DIR = process.env.DOCUMENT_STORAGE_LOCAL_DIR ?? ".storage/documents";
 export const DOCUMENT_FILE_TYPES = ["PDF","XLSX","XLS","CSV","JPG","JPEG","PNG","WEBP"] as const;
 export type DocumentFileType = (typeof DOCUMENT_FILE_TYPES)[number];

@@ -5,6 +5,7 @@ import { getDocumentStorage } from "@/storage/document-storage";
 import type { DocumentFileType } from "@/documents/config";
 import { PROCESSORS } from "@/documents/processors";
 import type { DocumentProcessingResult, ProcessingContent } from "@/documents/processing-types";
+import { normalizeDocument } from "@/documents/normalization";
 
 const SAFE_ERROR = "Document processing failed. Please retry.";
 
@@ -68,6 +69,8 @@ export async function processDocument(organizationId: string, companyId: string,
       prisma.document.update({ where: { id: document.id }, data: { documentStatus: "PROCESSED" } }),
     ]);
     if (previous?.extractedContentReference && previous.extractedContentReference !== reference) { try { await storage.delete(previous.extractedContentReference); } catch (cleanupError) { console.error("Old processing artifact cleanup failed", cleanupError); } }
+    const normalization = await normalizeDocument(organizationId, companyId, document.id);
+    if ("error" in normalization) console.warn("Document normalization deferred", normalization.error);
     return { documentId: document.id, status: "PROCESSED", fileType: document.fileType, metadata: { pageCount: extracted.pageCount, sheetCount: extracted.sheetCount, rowCount: extracted.rowCount, columnCount: extracted.columnCount, requiresOcr: Boolean(extracted.requiresOcr) }, extractedContentReference: reference, processedAt };
   } catch (error) {
     if (newReference) { try { await getDocumentStorage().delete(newReference); } catch (cleanupError) { console.error("Failed processing artifact cleanup", cleanupError); } }
