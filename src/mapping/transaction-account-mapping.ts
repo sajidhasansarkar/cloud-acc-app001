@@ -76,7 +76,7 @@ export async function mapTransactionToAccounts(organizationId: string, companyId
   });
   if (!aiSuggestion) return { ok: false, error: "AI understanding is not available for this transaction yet." };
 
-  const audit = (action: string, details: Record<string, unknown>) => prisma.documentAuditEvent.create({ data: { organizationId, companyId: company.id, documentId, userId, action, details } });
+  const audit = (action: string, details: Prisma.InputJsonValue) => prisma.documentAuditEvent.create({ data: { organizationId, companyId: company.id, documentId, userId, action, details } });
   await audit("ACCOUNT_MAPPING_STARTED", { transactionId: candidateId, reprocessing: force });
 
   try {
