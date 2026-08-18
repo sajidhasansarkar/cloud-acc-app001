@@ -46,6 +46,15 @@ export type CreateJournalEntryInput = {
   label?: string;
   sourceType?: JournalEntrySourceType;
   lines: JournalEntryLineInput[];
+  // Phase 4B-6 traceability (spec section 9). All optional and independent
+  // of each other — a manually created entry (the common case) simply
+  // omits them. When provided, each is re-verified against `companyId`
+  // below rather than trusted as-is, even though callers within this
+  // codebase (src/accounting/journal-entry-drafts.ts) already verify
+  // ownership themselves before calling createJournalEntry.
+  sourceDocumentId?: string;
+  transactionCandidateId?: string;
+  aiSuggestionId?: string;
 };
 
 // ------------------------------
@@ -368,6 +377,33 @@ export async function createJournalEntry(
     return { ok: false, error: linesCheck.error };
   }
 
+  // Phase 4B-6 (spec section 9/16): if traceability ids were supplied,
+  // re-verify each belongs to this same company/organization before
+  // writing anything — never trust a client-provided documentId/
+  // candidateId/suggestionId, even indirectly via a caller that already
+  // checked once.
+  if (input.sourceDocumentId) {
+    const document = await prisma.document.findFirst({
+      where: { id: input.sourceDocumentId, companyId: company.id, organizationId },
+      select: { id: true },
+    });
+    if (!document) return { ok: false, error: "Source document not found for this company." };
+  }
+  if (input.transactionCandidateId) {
+    const candidate = await prisma.normalizedTransactionCandidate.findFirst({
+      where: { id: input.transactionCandidateId, companyId: company.id, organizationId },
+      select: { id: true },
+    });
+    if (!candidate) return { ok: false, error: "Transaction candidate not found for this company." };
+  }
+  if (input.aiSuggestionId) {
+    const suggestion = await prisma.aIReviewSuggestion.findFirst({
+      where: { id: input.aiSuggestionId, candidate: { companyId: company.id, organizationId } },
+      select: { id: true },
+    });
+    if (!suggestion) return { ok: false, error: "AI suggestion not found for this company." };
+  }
+
   const entry = await prisma.journalEntry.create({
     data: {
       companyId: company.id,
@@ -380,6 +416,9 @@ export async function createJournalEntry(
       label: input.label?.trim() || null,
       status: "DRAFT",
       sourceType: input.sourceType ?? "MANUAL",
+      sourceDocumentId: input.sourceDocumentId ?? null,
+      transactionCandidateId: input.transactionCandidateId ?? null,
+      aiSuggestionId: input.aiSuggestionId ?? null,
       createdById,
       lines: {
         create: input.lines.map((line, index) => ({

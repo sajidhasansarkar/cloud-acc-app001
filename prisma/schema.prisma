@@ -221,6 +221,11 @@ enum AIReviewAuditAction {
   REJECTED
   EDITED
   FAILED
+  // Phase 4B-6: a DRAFT Journal Entry was created from this candidate's
+  // accepted AI suggestion. Recorded here (rather than a new audit table)
+  // so the full Source Transaction -> AI Suggestion -> Human Approval ->
+  // Draft Journal Entry chain lives in one auditable trail.
+  DRAFT_CREATED
 }
 
 // ------------------------------
@@ -719,6 +724,9 @@ model Document {
 
   processingResult DocumentProcessingResult?
   normalizedCandidates NormalizedTransactionCandidate[]
+  // Phase 4B-6 traceability: Draft Journal Entries created from this
+  // document's accepted AI suggestions.
+  draftJournalEntries JournalEntry[]
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -769,6 +777,10 @@ model NormalizedTransactionCandidate {
   aiReview AIReviewRecord?
   aiReviewSuggestions AIReviewSuggestion[]
   aiReviewAudits AIReviewAudit[]
+  // Phase 4B-6 traceability: Draft Journal Entries created from this
+  // candidate's accepted AI suggestion (duplicate-protected — see
+  // JournalEntry.transactionCandidateId).
+  draftJournalEntries JournalEntry[]
 
   @@unique([documentId, sourceRowReference])
   @@index([organizationId, companyId, documentId])
@@ -832,6 +844,9 @@ model AIReviewSuggestion {
   suggestedAccount Account? @relation("AISuggestedAccount", fields: [suggestedAccountId], references: [id], onDelete: SetNull)
   audits           AIReviewAudit[]
   reviewRecord     AIReviewRecord? @relation(fields: [candidateId], references: [candidateId], map: "ai_review_suggestions_review_record_fkey")
+  // Phase 4B-6 traceability: Draft Journal Entries created once this
+  // suggestion was accepted by a human.
+  draftJournalEntries JournalEntry[]
 
   @@index([candidateId, createdAt])
   @@index([suggestedAccountId])
@@ -850,13 +865,21 @@ model AIReviewAudit {
   userId         String?
   createdAt      DateTime            @default(now())
 
+  // Phase 4B-6: which DRAFT Journal Entry (if any) this audit row relates
+  // to — populated only for a DRAFT_CREATED action, so the accepted
+  // suggestion's Draft Journal Entry is traceable from the audit trail
+  // without a separate audit system.
+  journalEntryId String?
+
   candidate  NormalizedTransactionCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   suggestion AIReviewSuggestion? @relation(fields: [suggestionId], references: [id], onDelete: SetNull)
   reviewRecord AIReviewRecord? @relation(fields: [candidateId], references: [candidateId], map: "ai_review_audits_review_record_fkey")
   user       User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  journalEntry JournalEntry? @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
 
   @@index([candidateId, createdAt])
   @@index([action, createdAt])
+  @@index([journalEntryId])
   @@map("ai_review_audits")
 }
 
@@ -899,6 +922,17 @@ model JournalEntry {
   // comment. Purely descriptive in this phase.
   sourceType JournalEntrySourceType @default(MANUAL)
 
+  // Phase 4B-6 traceability (spec section 9): when a Draft Journal Entry is
+  // created from an accepted AI suggestion, these optionally link back to
+  // the originating Source Document, Normalized Transaction Candidate, and
+  // AI Suggestion. All three are nullable and SetNull on delete — a journal
+  // entry's own record must never disappear or be blocked from deleting a
+  // source document/candidate/suggestion. Manually created entries
+  // (sourceType MANUAL) simply leave these null.
+  sourceDocumentId       String?
+  transactionCandidateId String?
+  aiSuggestionId         String?
+
   // The user who created this entry (spec section 12). Deliberately not
   // onDelete: Cascade / SetNull — a journal entry's audit trail shouldn't
   // silently lose its author, and users in this system are suspended
@@ -916,6 +950,11 @@ model JournalEntry {
   accountingPeriod AccountingPeriod @relation(fields: [accountingPeriodId], references: [id])
   createdBy        User             @relation(fields: [createdById], references: [id])
 
+  sourceDocument       Document?                       @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  transactionCandidate NormalizedTransactionCandidate? @relation(fields: [transactionCandidateId], references: [id], onDelete: SetNull)
+  aiSuggestion         AIReviewSuggestion?              @relation(fields: [aiSuggestionId], references: [id], onDelete: SetNull)
+  aiReviewAudits       AIReviewAudit[]
+
   lines JournalEntryLine[]
 
   // Entry number must be unique within a company (spec section 10), but
@@ -928,6 +967,12 @@ model JournalEntry {
   @@index([accountingPeriodId])
   @@index([fiscalYearId])
   @@index([createdAt])
+  // Phase 4B-6 duplicate-draft protection (spec section 10): lets the
+  // workflow cheaply check "does a Draft Journal Entry already exist for
+  // this candidate?" without a full table scan.
+  @@index([transactionCandidateId])
+  @@index([sourceDocumentId])
+  @@index([aiSuggestionId])
   @@map("journal_entries")
 }
 

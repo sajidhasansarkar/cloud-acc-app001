@@ -135,6 +135,50 @@ export default async function JournalEntryDetailPage({
         </div>
       ) : null}
 
+      {entry.transactionCandidate || entry.sourceDocument || entry.aiSuggestion ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Source Traceability</CardTitle>
+            <CardDescription>
+              This Draft Journal Entry was created from a human-accepted AI suggestion. The original AI suggestion is
+              never overwritten — editing this entry only changes the entry itself.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            {entry.sourceDocument ? (
+              <Field
+                label="Source Document"
+                value={
+                  <Link
+                    href={`/companies/${company.id}/documents/${entry.sourceDocument.id}`}
+                    className="text-ink-900 underline"
+                  >
+                    {entry.sourceDocument.originalFileName}
+                  </Link>
+                }
+              />
+            ) : null}
+            {entry.transactionCandidate ? (
+              <Field
+                label="Transaction Candidate"
+                value={
+                  entry.transactionCandidate.sourceSheetName
+                    ? `Sheet: ${entry.transactionCandidate.sourceSheetName} · Row: ${entry.transactionCandidate.sourceRowNumber ?? entry.transactionCandidate.sourceRowReference}`
+                    : entry.transactionCandidate.sourceRowReference
+                }
+              />
+            ) : null}
+            {entry.aiSuggestion ? (
+              <>
+                <Field label="AI Provider" value={`${entry.aiSuggestion.provider}${entry.aiSuggestion.model ? ` (${entry.aiSuggestion.model})` : ""}`} />
+                <Field label="AI Confidence" value={entry.aiSuggestion.confidence} />
+                <Field label="AI Explanation" value={entry.aiSuggestion.explanation} />
+              </>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Journal Lines</CardTitle>

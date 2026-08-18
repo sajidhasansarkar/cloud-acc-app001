@@ -56,6 +56,48 @@ export async function getOwnedAccountingPeriod(
   });
 }
 
+// Phase 4B-6: the fiscal year for `companyId` whose date range contains
+// `date` (a normalized transaction date, not necessarily today), or null if
+// none does. Never creates one automatically — see the JournalEntry model
+// comment (spec section 6): "If no valid fiscal year exists, do NOT create
+// the Journal Entry."
+export async function getOwnedFiscalYearForDate(
+  organizationId: string,
+  companyId: string,
+  date: Date
+) {
+  const company = await getOwnedCompany(organizationId, companyId);
+  if (!company) return null;
+
+  return prisma.fiscalYear.findFirst({
+    where: {
+      companyId: company.id,
+      startDate: { lte: date },
+      endDate: { gte: date },
+    },
+  });
+}
+
+// Phase 4B-6: the accounting period for `companyId` whose date range
+// contains `date`. Same "never guess/auto-create" rule as above (spec
+// section 7).
+export async function getOwnedAccountingPeriodForDate(
+  organizationId: string,
+  companyId: string,
+  date: Date
+) {
+  const company = await getOwnedCompany(organizationId, companyId);
+  if (!company) return null;
+
+  return prisma.accountingPeriod.findFirst({
+    where: {
+      companyId: company.id,
+      startDate: { lte: date },
+      endDate: { gte: date },
+    },
+  });
+}
+
 // A chart-of-accounts account scoped to a specific company, which itself
 // must belong to the caller's organization. Same rule as everywhere else
 // in this file: a bare accountId is never trusted on its own.
@@ -104,6 +146,30 @@ export async function getOwnedJournalEntryById(
   });
 }
 
+// Phase 4B-6: a normalized transaction candidate + its AI review record,
+// scoped to Authenticated User -> Organization -> Company -> Document ->
+// Transaction Candidate. Same rule as everywhere else in this file: a bare
+// candidateId/documentId is never trusted on its own. Reused by the
+// Accepted Suggestion -> Draft Journal Entry workflow so it doesn't
+// re-derive this ownership chain differently from src/ai/review.ts.
+export async function getOwnedTransactionCandidate(
+  organizationId: string,
+  companyId: string,
+  documentId: string,
+  candidateId: string
+) {
+  return prisma.normalizedTransactionCandidate.findFirst({
+    where: {
+      id: candidateId,
+      documentId,
+      companyId,
+      organizationId,
+      document: { id: documentId, companyId, organizationId, company: { organizationId } },
+    },
+    include: { aiReview: true },
+  });
+}
+
 export async function getOwnedJournalEntry(
   organizationId: string,
   companyId: string,
@@ -124,6 +190,14 @@ export async function getOwnedJournalEntry(
       fiscalYear: true,
       accountingPeriod: true,
       createdBy: { select: { id: true, name: true } },
+      // Phase 4B-6 traceability (spec section 11): only populated for
+      // entries created from an accepted AI suggestion — null for manual
+      // entries. Kept minimal (no sensitive user data, no raw file
+      // contents) since this is purely for display on the entry detail
+      // page.
+      sourceDocument: { select: { id: true, originalFileName: true } },
+      transactionCandidate: { select: { id: true, sourceRowReference: true, sourceSheetName: true, sourceRowNumber: true } },
+      aiSuggestion: { select: { id: true, provider: true, model: true, explanation: true, confidence: true } },
     },
   });
 }

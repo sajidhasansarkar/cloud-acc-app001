@@ -42,6 +42,13 @@ export async function retryAIReviewAction(companyId: string, documentId: string,
   return generateAIReviewAction(companyId, documentId, candidateId);
 }
 
+// Compatibility alias: some UI components (outside Phase 4B-6's scope)
+// reference "prepareAIReviewAction" — same signature/behavior as running
+// AI review generation. Kept as an alias rather than a duplicate
+// implementation so there is exactly one place the review-generation logic
+// lives.
+export const prepareAIReviewAction = generateAIReviewAction;
+
 export async function getAIReviewContextAction(companyId: string, documentId: string, candidateId: string) {
   const { organization } = await requireActiveOrganization();
   const company = await getOwnedCompany(organization.id, companyId);
