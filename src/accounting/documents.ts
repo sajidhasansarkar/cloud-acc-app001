@@ -53,7 +53,7 @@ export async function getOwnedDocumentDetails(organizationId: string, companyId:
       uploadedBy: { select: { name: true } },
       company: { select: { displayName: true } },
       classification: { select: { status: true, documentType: true, confidence: true, reasoning: true, processingRoute: true, classifierMethod: true, manuallyReviewed: true, classifiedAt: true, correctedBy: { select: { name: true } } } },
-      processingResult: { select: { extractionStatus: true, pageCount: true, sheetCount: true, tableCount: true, rowCount: true, columnCount: true, textBlockCount: true, requiresOcr: true, processingError: true, warnings: true, processedAt: true } },
+      processingResult: { select: { extractionStatus: true, pageCount: true, sheetCount: true, tableCount: true, rowCount: true, columnCount: true, textBlockCount: true, requiresOcr: true, extractedContentReference: true, processingError: true, warnings: true, processedAt: true } },
       normalizedCandidates: {
         orderBy: [{ sourcePageNumber: "asc" }, { sourceRowNumber: "asc" }, { createdAt: "asc" }],
         include: {
