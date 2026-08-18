@@ -31,6 +31,25 @@ export function ReportsDropdown({
   const activeReport = REPORTS.find((report) => pathname.startsWith(`${basePath}/${report.segment}`));
   const inReportsSection = Boolean(activeReport) || pathname.startsWith(`${basePath}/reports`);
 
+  // The dropdown lives in a layout that stays mounted across navigation
+  // within the company workspace, so a plain "closed by default" state
+  // would otherwise collapse the panel the moment a report link is
+  // clicked, even though the sidebar itself never unmounts. `manualOpen`
+  // only overrides the section-derived default until the user leaves the
+  // Reports section, at which point it resets so returning later re-opens
+  // (or stays closed) based on the route again.
+  //
+  // These hooks run unconditionally (before the `collapsed` early return
+  // below) — React requires hook calls to happen in the same order on
+  // every render, so they can't be skipped just because the collapsed
+  // variant doesn't need their result.
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const open = manualOpen ?? inReportsSection;
+
+  useEffect(() => {
+    if (!inReportsSection) setManualOpen(null);
+  }, [inReportsSection]);
+
   if (collapsed) {
     return (
       <Link
@@ -46,20 +65,6 @@ export function ReportsDropdown({
       </Link>
     );
   }
-
-  // The dropdown lives in a layout that stays mounted across navigation
-  // within the company workspace, so a plain "closed by default" state
-  // would otherwise collapse the panel the moment a report link is
-  // clicked, even though the sidebar itself never unmounts. `manualOpen`
-  // only overrides the section-derived default until the user leaves the
-  // Reports section, at which point it resets so returning later re-opens
-  // (or stays closed) based on the route again.
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
-  const open = manualOpen ?? inReportsSection;
-
-  useEffect(() => {
-    if (!inReportsSection) setManualOpen(null);
-  }, [inReportsSection]);
 
   return (
     <div className={cn("relative", className)}>
