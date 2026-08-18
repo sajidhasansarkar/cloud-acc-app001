@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { requireActiveOrganization } from "@/lib/session";
 import { canManageDocuments } from "@/lib/rbac";
 import { finalizeUploadedDocument } from "@/accounting/documents";
-import { processDocument } from "@/documents/processing";
 
 export const runtime = "nodejs";
 
@@ -37,21 +36,17 @@ export async function POST(
 
     if (!result.ok) return NextResponse.json(result, { status: 400 });
 
-    const processing = await processDocument(organization.id, params.companyId, result.document.id);
-
     return NextResponse.json({
       ok: true,
-      processingStatus: processing.status,
       document: {
         id: result.document.id,
         originalFileName: result.document.originalFileName,
         fileType: result.document.fileType,
         mimeType: result.document.mimeType,
         fileSize: result.document.fileSize.toString(),
-        documentStatus: processing.status,
+        documentStatus: result.document.documentStatus,
         uploadedBy: result.document.uploadedBy.name,
         createdAt: result.document.createdAt.toISOString(),
-        processingError: processing.error ?? null,
       },
     });
   } catch (error) {

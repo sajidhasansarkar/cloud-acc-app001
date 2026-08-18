@@ -12,6 +12,7 @@ const REPORTS = [
   { label: "Balance Sheet", segment: "balance-sheet", icon: FileBarChart },
   { label: "Income Statement", segment: "income-statement", icon: FileBarChart },
   { label: "Cash Flow", segment: "cash-flow", icon: WalletCards },
+  { label: "GST/HST Return", segment: "reports/gst-hst", icon: FileBarChart },
 ];
 
 export function ReportsDropdown({

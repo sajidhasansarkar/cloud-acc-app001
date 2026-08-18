@@ -23,3 +23,13 @@ This phase only stores the mapping rule shape
 against a real transaction, applies a mapping automatically, or involves
 AI — automatic transaction categorization, journal entries, bank import,
 and reconciliation still don't exist. Do not add them here.
+
+## Phase 5A-5 — transaction account mapping
+
+`transaction-account-mapping.ts` maps normalized transaction candidates to
+existing company Chart of Accounts accounts using the Phase 5A-4 AI
+understanding suggestion as the AI input. It stores AI suggestions,
+company-scoped debit/credit selections, confidence, alternatives, warnings,
+reasoning, duplicate warnings, and user corrections without creating Journal
+Entries or Journal Lines. Reprocessing updates the same mapping row and
+preserves user-selected accounts.

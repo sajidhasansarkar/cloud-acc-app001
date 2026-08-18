@@ -242,6 +242,7 @@ const decimalAmountSchema = z
 
 export const journalEntryLineSchema = z.object({
   accountId: z.string().trim().min(1, "Account is required"),
+  taxCodeId: optionalId,
   description: optionalTrimmed(500),
   reference: optionalTrimmed(100),
   debit: decimalAmountSchema,

@@ -171,7 +171,7 @@ function markDuplicates(candidates: NormalizedCandidateDraft[]) {
 export async function normalizeDocument(organizationId: string, companyId: string, documentId: string): Promise<NormalizationResult | { error: string }> {
   const document = await getOwnedDocumentDetails(organizationId, companyId, documentId);
   if (!document) return { error: "Document not found." };
-  if (document.documentStatus !== "PROCESSED" || !document.processingResult?.extractedContentReference) return { error: "Document must be successfully processed before normalization." };
+  if (document.documentStatus !== "COMPLETED" || !document.processingResult?.extractedContentReference) return { error: "Document must be successfully processed before normalization." };
   const company = await getOwnedCompany(organizationId, companyId);
   if (!company) return { error: "Company not found." };
   try {

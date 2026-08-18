@@ -60,6 +60,7 @@ export async function createJournalEntryAction(input: {
   sourceType?: JournalEntrySourceType;
   lines: {
     accountId: string;
+    taxCodeId?: string;
     description?: string;
     reference?: string;
     debit: string | number;

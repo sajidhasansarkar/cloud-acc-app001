@@ -9,6 +9,7 @@ import {
   getOwnedJournalEntry,
   getOwnedJournalEntryById,
 } from "./access";
+import { getOwnedTaxCode } from "@/tax/access";
 
 /**
  * Journal Entry database foundation (Phase 4A-1).
@@ -29,6 +30,7 @@ export type JournalEntryResult =
 
 export type JournalEntryLineInput = {
   accountId: string;
+  taxCodeId?: string;
   description?: string;
   reference?: string;
   debit: Prisma.Decimal.Value;
@@ -231,6 +233,14 @@ async function verifyLines(
     }
   }
 
+  const uniqueTaxCodeIds = [...new Set(lines.map((line) => line.taxCodeId?.trim()).filter(Boolean) as string[])];
+  for (const taxCodeId of uniqueTaxCodeIds) {
+    const taxCode = await getOwnedTaxCode(organizationId, companyId, taxCodeId);
+    if (!taxCode) {
+      return { ok: false, error: "One or more journal lines reference a tax code outside this company." };
+    }
+  }
+
   let validLineCount = 0;
   for (const line of lines) {
     const lineCheck = validateLineAmounts(line, {
@@ -303,6 +313,7 @@ export async function validateJournalEntryForReview(
     entry.companyId,
     entry.lines.map((line) => ({
       accountId: line.accountId,
+      taxCodeId: line.taxCodeId ?? undefined,
       description: line.description ?? undefined,
       reference: line.reference ?? undefined,
       debit: line.debit,
@@ -476,6 +487,7 @@ export async function createJournalEntry(
       lines: {
         create: input.lines.map((line, index) => ({
           accountId: line.accountId,
+          taxCodeId: line.taxCodeId ?? null,
           description: line.description?.trim() || null,
           reference: line.reference?.trim() || null,
           debit: line.debit,
@@ -1106,6 +1118,7 @@ export async function updateJournalEntry(
         data: input.lines.map((line, index) => ({
           journalEntryId: existing.id,
           accountId: line.accountId,
+          taxCodeId: line.taxCodeId ?? null,
           description: line.description?.trim() || null,
           reference: line.reference?.trim() || null,
           debit: line.debit,

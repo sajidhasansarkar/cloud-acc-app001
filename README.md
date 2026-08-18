@@ -204,3 +204,17 @@ deleted). `MappingSourceType`
 an enum. No automatic matching engine, transaction categorization, AI,
 journal entries, bank import, or reconciliation — those still don't exist.
 Backend only — no UI yet.
+
+## Phase 5A-2 — Document Classification & Processing Router
+
+Implemented the metadata-only classification foundation. Uploaded documents are classified from filename, extension, and MIME metadata; no document contents are parsed and no AI/OCR provider is invoked.
+
+- Classification model/state is stored in `document_classifications`.
+- Supported accounting document types: bank statement, invoice, bill, receipt, balance sheet, income statement, trial balance, general ledger, tax document, payroll document, expense report, other, unknown.
+- Confidence is an evidence level, not a probability. The configurable acceptance threshold is `DOCUMENT_CLASSIFICATION_CONFIDENCE_THRESHOLD` (`MEDIUM` by default).
+- Low-confidence, unknown, failed, or ambiguous metadata matches route to `MANUAL_REVIEW`.
+- `classifyAccountingDocument(documentId)` provides the authenticated, company-scoped service entry point.
+- `routeDocument(documentId)` exposes the future processor boundary without invoking a processor.
+- Manual correction is restricted to classifications that require review and is audited.
+- Classification is idempotent; explicit reclassification is supported.
+- Audit actions: `DOCUMENT_CLASSIFICATION_STARTED`, `DOCUMENT_CLASSIFIED`, `DOCUMENT_CLASSIFICATION_FAILED`, `DOCUMENT_CLASSIFICATION_CORRECTED`.

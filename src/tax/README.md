@@ -18,5 +18,10 @@ future phase builds the screens that call these functions (same pattern as
   future "add tax code" form to default/filter by. No rates are implied or
   hard-coded anywhere in this module.
 
-Tax calculations, tax filing, tax returns, AI tax decisions, account
-mapping, and journal entries still don't exist — do not add them here.
+Phase 4B-19 adds `gst-hst-return.ts`, the server-side GST/HST calculation
+foundation. It reads only POSTED Journal Entries / Journal Lines, uses the
+existing TaxCode configuration and Prisma.Decimal arithmetic, and never files
+or submits a return. A Journal Entry Line may reference an existing TaxCode;
+the report uses that relationship for traceability and calculation. No tax
+filing, authority integration, AI, file processing, or automatic journal
+creation is implemented.

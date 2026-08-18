@@ -1,5 +1,4 @@
-// Accounting Platform — Phase 1 + Phase 2A + Phase 2B-1 + Phase 3A-1 + Phase
-// 3B-1 + Phase 3C-1 + Phase 4A-1 schema
+// Accounting Platform — Phase 1 through Phase 4B-19 schema
 // Phase 1: auth, organizations, memberships, companies (foundation).
 // Phase 2A: full company management + reusable country configuration.
 // Phase 2B-1: fiscal year / accounting period foundation (backend only —
@@ -16,7 +15,8 @@
 // reads or applies these mappings to a real transaction yet, since
 // transactions / bank import don't exist yet.
 // Phase 4A-1 + later review phases: journal entry foundation and the
-// human review lifecycle. JournalEntry status now includes DRAFT, IN_REVIEW,
+// human review lifecycle. Phase 4B-19 adds optional TaxCode linkage on
+// existing Journal Entry Lines for GST/HST reporting. JournalEntry status now includes DRAFT, IN_REVIEW,
 // READY_FOR_POSTING, POSTED and VOID. Review states do not post to any ledger.
 
 generator client {
@@ -174,10 +174,12 @@ enum JournalEntrySourceType {
 }
 
 enum DocumentStatus {
+  UPLOADING
   UPLOADED
   PROCESSING
-  PROCESSED
+  COMPLETED
   FAILED
+  CANCELLED
   ARCHIVED
 }
 
@@ -186,10 +188,66 @@ enum DocumentFileType {
   XLSX
   XLS
   CSV
+  DOC
+  DOCX
   JPG
   JPEG
   PNG
   WEBP
+  TIFF
+}
+
+enum DocumentExtractionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum DocumentClassificationStatus {
+  PENDING
+  CLASSIFYING
+  CLASSIFIED
+  CLASSIFICATION_FAILED
+  NEEDS_REVIEW
+  MANUALLY_REVIEWED
+}
+
+enum AccountingDocumentType {
+  BANK_STATEMENT
+  INVOICE
+  BILL
+  RECEIPT
+  BALANCE_SHEET
+  INCOME_STATEMENT
+  TRIAL_BALANCE
+  GENERAL_LEDGER
+  TAX_DOCUMENT
+  PAYROLL_DOCUMENT
+  EXPENSE_REPORT
+  OTHER
+  UNKNOWN
+}
+
+enum ClassificationConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum DocumentProcessingRoute {
+  BANK_STATEMENT_PROCESSOR
+  INVOICE_PROCESSOR
+  BILL_PROCESSOR
+  RECEIPT_PROCESSOR
+  FINANCIAL_STATEMENT_PROCESSOR
+  GENERAL_LEDGER_PROCESSOR
+  TAX_DOCUMENT_PROCESSOR
+  PAYROLL_DOCUMENT_PROCESSOR
+  EXPENSE_REPORT_PROCESSOR
+  OTHER_PROCESSOR
+  MANUAL_REVIEW
 }
 
 enum NormalizationConfidence {
@@ -218,6 +276,20 @@ enum AIReviewDecision {
   ACCEPTED
   REJECTED
   EDITED
+}
+
+enum JournalPreparationStatus {
+  PENDING
+  MAPPED
+  PARTIAL
+  NEEDS_REVIEW
+  READY_FOR_JOURNAL
+  FAILED
+}
+
+enum AccountMappingSource {
+  AI
+  USER
 }
 
 enum AIReviewAuditAction {
@@ -254,6 +326,7 @@ model User {
   updatedAt    DateTime   @updatedAt
 
   memberships Membership[]
+  documentAuditEvents DocumentAuditEvent[]
 
   // Journal entries (Phase 4A-1) this user created. No onDelete cascade —
   // a journal entry must not disappear (or silently orphan) if the user
@@ -261,11 +334,13 @@ model User {
   // createdById is displayed (see JournalEntry.createdBy comment below).
   journalEntriesCreated JournalEntry[] @relation("JournalEntryCreatedBy")
   documentsUploaded Document[]
+  documentClassificationsCorrected DocumentClassification[] @relation("DocumentClassificationCorrectedBy")
   normalizedCandidatesCorrected NormalizedTransactionCandidate[] @relation("CandidateCorrections")
   aiReviewRecords AIReviewRecord[]
   aiReviewAudits AIReviewAudit[]
   journalEntriesPosted JournalEntry[] @relation("JournalEntryPostedBy")
   aiReviewedRecords AIReviewRecord[] @relation("AIReviewedBy")
+  accountMappingsReviewed TransactionAccountMapping[] @relation("AccountMappingReviewedBy")
 
   @@map("users")
 }
@@ -279,10 +354,14 @@ model Organization {
   updatedAt DateTime @updatedAt
 
   memberships Membership[]
+  documentAuditEvents DocumentAuditEvent[]
   companies   Company[]
   generalLedgerEntries GeneralLedgerEntry[]
   documents   Document[]
+  documentClassifications DocumentClassification[]
   normalizedCandidates NormalizedTransactionCandidate[]
+
+  transactionAccountMappings TransactionAccountMapping[]
 
   @@map("organizations")
 }
@@ -360,7 +439,10 @@ model Company {
   journalEntries    JournalEntry[]
   generalLedgerEntries GeneralLedgerEntry[]
   documents         Document[]
+  documentClassifications DocumentClassification[]
+  documentAuditEvents DocumentAuditEvent[]
   normalizedCandidates NormalizedTransactionCandidate[]
+  transactionAccountMappings TransactionAccountMapping[]
 
   @@index([organizationId])
   @@index([countryConfigurationId])
@@ -434,6 +516,10 @@ model Account {
   journalEntryLines JournalEntryLine[]
   generalLedgerEntries GeneralLedgerEntry[]
   aiSuggestedReviews AIReviewSuggestion[] @relation("AISuggestedAccount")
+  mappingDebitSuggestions TransactionAccountMapping[] @relation("MappingDebitAccount")
+  mappingCreditSuggestions TransactionAccountMapping[] @relation("MappingCreditAccount")
+  mappingSelectedDebit TransactionAccountMapping[] @relation("MappingSelectedDebit")
+  mappingSelectedCredit TransactionAccountMapping[] @relation("MappingSelectedCredit")
   aiHumanReviewRecords AIReviewRecord[] @relation("AIHumanAccount")
 
   // Account code must be unique within a company, but the same code (e.g.
@@ -547,6 +633,7 @@ model CountryConfiguration {
   updatedAt DateTime @updatedAt
 
   companies Company[]
+  documentAuditEvents DocumentAuditEvent[]
 
   @@map("country_configurations")
 }
@@ -558,9 +645,9 @@ model CountryConfiguration {
 
 // A single tax code belonging to a Company (e.g. "HST-ON" / 13% / HST for a
 // Canadian company, or "STD" / 20% / VAT for a UK company). This phase only
-// establishes the model and its constraints — no tax calculation, filing,
-// returns, AI tax decisions, account mapping, or journal entries read/write
-// it yet.
+// establishes the model and its constraints. Phase 4B-19 reads existing
+// TaxCode rows for GST/HST report calculation; it does not file, submit, or
+// mutate tax records.
 //
 // countryCode is a plain ISO 3166-1 alpha-2 string (matching the pattern
 // already used by Company.country) rather than a required FK to
@@ -596,8 +683,8 @@ model TaxCode {
   // Whether the tax this code represents can be recovered/claimed back as
   // an input tax credit (true for most GST/HST/VAT on business purchases,
   // typically false for e.g. US sales tax paid by the end consumer). Purely
-  // descriptive metadata in this phase — nothing yet reads it to affect a
-  // calculation.
+  // configuration metadata used by the GST/HST report foundation to decide
+  // whether purchase/input tax is eligible for credit.
   isRecoverable Boolean @default(true)
 
   // Inactive tax codes are hidden from normal selection lists but are never
@@ -615,6 +702,7 @@ model TaxCode {
   // code. A tax code is never deleted (isActive above), so this relation
   // doesn't need an onDelete action — nothing here cascades.
   accountMappings AccountMapping[]
+  journalEntryLines JournalEntryLine[]
 
   // Tax code must be unique within a company, but the same code (e.g.
   // "STD") is allowed to repeat across different companies — same pattern
@@ -699,28 +787,84 @@ model AccountMapping {
 }
 
 // ------------------------------
-// Documents (Phase 4B-1 — intake/storage foundation only)
+// Documents (Phase 5A-1 — upload/ingestion foundation only)
 // ------------------------------
 
 
 model DocumentProcessingResult {
-  id                         String         @id @default(cuid())
-  documentId                 String         @unique
+  id                         String                  @id @default(cuid())
+  documentId                 String                  @unique
   detectedFileType           DocumentFileType
+  extractionStatus           DocumentExtractionStatus @default(PENDING)
   pageCount                  Int?
   sheetCount                 Int?
+  tableCount                 Int?
   rowCount                   Int?
   columnCount                Int?
-  requiresOcr                Boolean        @default(false)
+  textBlockCount             Int?
+  requiresOcr                Boolean                 @default(false)
   extractedContentReference  String?
   processingError            String?
+  warnings                   Json?
   processedAt                DateTime?
-  createdAt                  DateTime       @default(now())
-  updatedAt                  DateTime       @updatedAt
+  createdAt                  DateTime                @default(now())
+  updatedAt                  DateTime                @updatedAt
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
+  @@index([extractionStatus])
+  @@index([processedAt])
   @@map("document_processing_results")
+}
+
+model DocumentAuditEvent {
+  id         String   @id @default(cuid())
+  documentId String?
+  organizationId String
+  companyId  String
+  userId     String
+  action     String
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  document     Document?    @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@index([organizationId, companyId, createdAt])
+  @@index([documentId, createdAt])
+  @@map("document_audit_events")
+}
+
+model DocumentClassification {
+  id                 String                       @id @default(cuid())
+  documentId         String                       @unique
+  organizationId     String
+  companyId          String
+  status             DocumentClassificationStatus @default(PENDING)
+  documentType       AccountingDocumentType      @default(UNKNOWN)
+  confidence         ClassificationConfidence    @default(LOW)
+  reasoning          String?
+  processingRoute    DocumentProcessingRoute     @default(MANUAL_REVIEW)
+  classifierMethod   String?
+  classifierVersion  String?
+  manuallyReviewed   Boolean                      @default(false)
+  correctedById      String?
+  classifiedAt       DateTime?
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company      Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  correctedBy  User? @relation("DocumentClassificationCorrectedBy", fields: [correctedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, companyId, status])
+  @@index([companyId, documentType])
+  @@index([companyId, processingRoute])
+  @@index([correctedById])
+  @@map("document_classifications")
 }
 
 model Document {
@@ -733,12 +877,16 @@ model Document {
   mimeType         String
   fileSize         BigInt
   storageKey       String         @unique
+  fileHash         String
   documentStatus   DocumentStatus @default(UPLOADED)
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
   processingResult DocumentProcessingResult?
+  classification DocumentClassification?
+  auditEvents DocumentAuditEvent[]
   normalizedCandidates NormalizedTransactionCandidate[]
+  transactionAccountMappings TransactionAccountMapping[]
   // Phase 4B-6 traceability: Draft Journal Entries created from this
   // document's accepted AI suggestions.
   draftJournalEntries JournalEntry[]
@@ -749,6 +897,8 @@ model Document {
 
   @@index([organizationId, companyId, createdAt])
   @@index([companyId, documentStatus])
+  @@index([companyId, fileHash])
+  @@unique([companyId, fileHash])
   @@index([uploadedById])
   @@map("documents")
 }
@@ -791,6 +941,7 @@ model NormalizedTransactionCandidate {
   correctedBy User? @relation("CandidateCorrections", fields: [correctedById], references: [id], onDelete: SetNull)
   aiReview AIReviewRecord?
   aiReviewSuggestions AIReviewSuggestion[]
+  accountMapping TransactionAccountMapping?
   aiReviewAudits AIReviewAudit[]
   // Phase 4B-6 traceability: Draft Journal Entries created from this
   // candidate's accepted AI suggestion (duplicate-protected — see
@@ -802,6 +953,51 @@ model NormalizedTransactionCandidate {
   @@index([companyId, possibleDuplicate])
   @@index([documentId, createdAt])
   @@map("normalized_transaction_candidates")
+}
+
+// Phase 5A-5: account mapping and journal preparation state for one normalized transaction.
+// This stores suggestions and user selections only; it never creates Journal Entries or Journal Lines.
+model TransactionAccountMapping {
+  id                    String                   @id @default(cuid())
+  candidateId           String                   @unique
+  documentId            String
+  organizationId        String
+  companyId             String
+  status                JournalPreparationStatus @default(PENDING)
+  aiDebitAccountId      String?
+  aiCreditAccountId     String?
+  selectedDebitAccountId String?
+  selectedCreditAccountId String?
+  debitSource            AccountMappingSource?
+  creditSource           AccountMappingSource?
+  debitConfidence       NormalizationConfidence?
+  creditConfidence      NormalizationConfidence?
+  reasoning             String?
+  alternatives          Json
+  warnings              Json
+  duplicateWarning      Boolean                  @default(false)
+  taxContext            Json?
+  userSelectedById      String?
+  userSelectedAt        DateTime?
+  aiMappedAt            DateTime?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+
+  candidate             NormalizedTransactionCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  document              Document                  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  organization          Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company               Company                   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  aiDebitAccount        Account?                  @relation("MappingDebitAccount", fields: [aiDebitAccountId], references: [id], onDelete: SetNull)
+  aiCreditAccount       Account?                  @relation("MappingCreditAccount", fields: [aiCreditAccountId], references: [id], onDelete: SetNull)
+  selectedDebitAccount  Account?                  @relation("MappingSelectedDebit", fields: [selectedDebitAccountId], references: [id], onDelete: SetNull)
+  selectedCreditAccount Account?                  @relation("MappingSelectedCredit", fields: [selectedCreditAccountId], references: [id], onDelete: SetNull)
+  userSelectedBy        User?                    @relation("AccountMappingReviewedBy", fields: [userSelectedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, companyId, status])
+  @@index([documentId, updatedAt])
+  @@index([companyId, aiDebitAccountId])
+  @@index([companyId, aiCreditAccountId])
+  @@map("transaction_account_mappings")
 }
 
 // AI Review foundation (Phase 4B-4). One minimal audit record per normalized
@@ -1014,6 +1210,12 @@ model JournalEntryLine {
   journalEntryId String
   accountId      String
 
+  // Phase 4B-19: optional reference to the existing company TaxCode. This
+  // annotates the existing Journal Entry Line; it does not create a second
+  // transaction system. Historical tax codes may be deactivated without
+  // deleting the relationship.
+  taxCodeId      String?
+
   description String?
   reference   String?
 
@@ -1042,9 +1244,11 @@ model JournalEntryLine {
   // section 5) since Prisma can't express a cross-row "same companyId as
   // my parent" constraint declaratively.
   account Account @relation(fields: [accountId], references: [id])
+  taxCode TaxCode? @relation(fields: [taxCodeId], references: [id], onDelete: SetNull)
 
   @@index([journalEntryId])
   @@index([accountId])
+  @@index([taxCodeId])
   @@map("journal_entry_lines")
 }
 
