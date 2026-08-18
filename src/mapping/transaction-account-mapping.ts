@@ -116,7 +116,7 @@ export async function mapTransactionToAccounts(organizationId: string, companyId
         alternatives: alternatives as unknown as Prisma.InputJsonValue,
         warnings: warnings as unknown as Prisma.InputJsonValue,
         duplicateWarning: candidate.possibleDuplicate,
-        taxContext: null,
+        taxContext: Prisma.JsonNull,
         aiMappedAt: new Date(),
       },
       update: {
