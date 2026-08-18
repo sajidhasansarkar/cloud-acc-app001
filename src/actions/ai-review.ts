@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
 import { requireActiveOrganization } from "@/lib/session";
 import { getOwnedCompany } from "@/accounting/access";
+import { getSourceAIDraftReconciliation } from "@/ai/reconciliation";
 import { prisma } from "@/lib/prisma";
 import { canManageDocuments, canReviewAI } from "@/lib/rbac";
 import { buildAccountingAIContext } from "@/ai/context";
@@ -23,6 +24,9 @@ type AIReviewAuditWithUser = Prisma.AIReviewAuditGetPayload<{
     model: true;
     contextVersion: true;
     confidence: true;
+    previousHumanReviewStatus: true;
+    newHumanReviewStatus: true;
+    relevantCorrection: true;
     createdAt: true;
     user: { select: { id: true, name: true } };
   };
@@ -121,4 +125,87 @@ export async function editAIReviewAction(companyId: string, documentId: string, 
   const result = await editAccountingAISuggestion(organization.id, company.id, documentId, candidateId, user.id, input);
   if (result.ok) revalidatePath(`/companies/${company.id}/documents/${documentId}`);
   return result;
+}
+
+
+export async function markAIReviewReadyAction(
+  companyId: string,
+  documentId: string,
+  candidateId: string
+) {
+  const { role, user, organization } = await requireActiveOrganization();
+  if (!canReviewAI(role)) {
+    return { ok: false as const, error: "You don't have permission to mark reviews ready." };
+  }
+
+  const company = await getOwnedCompany(organization.id, companyId);
+  if (!company) return { ok: false as const, error: "Company not found." };
+
+  const reconciliation = await getSourceAIDraftReconciliation(
+    organization.id,
+    company.id,
+    documentId,
+    candidateId
+  );
+
+  if (!reconciliation) {
+    return { ok: false as const, error: "Transaction candidate not found." };
+  }
+
+  if (!reconciliation.canMarkReady) {
+    const blocking = reconciliation.checklist
+      .filter((item) => item.blocking && !item.complete)
+      .map((item) => item.label);
+
+    return {
+      ok: false as const,
+      error: blocking.length
+        ? `Review cannot be marked ready. Complete: ${blocking.join(", ")}.`
+        : "Review cannot be marked ready because one or more blocking validation rules failed.",
+    };
+  }
+
+  const current = await prisma.aIReviewRecord.findUnique({
+    where: { candidateId },
+    select: { humanReviewStatus: true, decision: true },
+  });
+
+  if (!current) return { ok: false as const, error: "AI review record not found." };
+  if (current.decision === "REJECTED") {
+    return { ok: false as const, error: "A rejected review cannot be marked ready." };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.aIReviewRecord.update({
+      where: { candidateId },
+      data: {
+        humanReviewStatus: "READY_FOR_POSTING",
+        reviewedById: user.id,
+        reviewedAt: new Date(),
+      },
+    });
+
+    await tx.aIReviewAudit.create({
+      data: {
+        candidateId,
+        suggestionId: reconciliation.latestSuggestion?.id ?? null,
+        action: "EDITED",
+        provider: reconciliation.latestSuggestion?.provider ?? null,
+        model: reconciliation.latestSuggestion?.model ?? null,
+        contextVersion: reconciliation.latestSuggestion?.contextVersion ?? null,
+        confidence: reconciliation.latestSuggestion?.confidence ?? null,
+        userId: user.id,
+        previousHumanReviewStatus: current.humanReviewStatus,
+        newHumanReviewStatus: "READY_FOR_POSTING",
+        relevantCorrection: "Human review completed; reconciliation requirements passed.",
+        journalEntryId: reconciliation.draft?.id ?? null,
+      },
+    });
+  });
+
+  revalidatePath(`/companies/${companyId}/ai-review/${candidateId}`);
+  revalidatePath(`/companies/${companyId}/ai-review`);
+  revalidatePath(`/companies/${companyId}/documents/${documentId}`);
+
+  return { ok: true as const, status: "READY_FOR_POSTING" as const };
 }

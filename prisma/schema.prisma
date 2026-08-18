@@ -209,6 +209,13 @@ enum AIReviewStatus {
   FAILED
 }
 
+enum HumanReviewStatus {
+  PENDING_REVIEW
+  NEEDS_CORRECTION
+  READY_FOR_POSTING
+  REJECTED
+}
+
 enum AIReviewDecision {
   ACCEPTED
   REJECTED
@@ -796,8 +803,9 @@ model NormalizedTransactionCandidate {
 model AIReviewRecord {
   id             String          @id @default(cuid())
   candidateId    String          @unique
-  status         AIReviewStatus  @default(NOT_REVIEWED)
-  decision       AIReviewDecision?
+  status            AIReviewStatus   @default(NOT_REVIEWED)
+  humanReviewStatus HumanReviewStatus @default(PENDING_REVIEW)
+  decision          AIReviewDecision?
   provider       String?
   model          String?
   contextVersion String          @default("v1")
@@ -820,6 +828,7 @@ model AIReviewRecord {
   audits        AIReviewAudit[]
 
   @@index([status, createdAt])
+  @@index([humanReviewStatus, updatedAt])
   @@index([decision, reviewedAt])
   @@map("ai_review_records")
 }
@@ -861,9 +870,16 @@ model AIReviewAudit {
   provider       String?
   model          String?
   contextVersion String?
-  confidence     NormalizationConfidence?
-  userId         String?
-  createdAt      DateTime            @default(now())
+  confidence               NormalizationConfidence?
+  userId                   String?
+  createdAt                DateTime            @default(now())
+
+  // Phase 4B-7: human review transition metadata. These fields keep the
+  // review decision/history in the existing audit trail rather than creating
+  // a duplicate audit system.
+  previousHumanReviewStatus HumanReviewStatus?
+  newHumanReviewStatus      HumanReviewStatus?
+  relevantCorrection        String?
 
   // Phase 4B-6: which DRAFT Journal Entry (if any) this audit row relates
   // to — populated only for a DRAFT_CREATED action, so the accepted

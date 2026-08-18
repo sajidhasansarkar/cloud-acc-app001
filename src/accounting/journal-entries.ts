@@ -717,7 +717,8 @@ export async function updateJournalEntry(
   organizationId: string,
   companyId: string,
   journalEntryId: string,
-  input: UpdateJournalEntryWithLinesInput
+  input: UpdateJournalEntryWithLinesInput,
+  userId?: string
 ): Promise<JournalEntryResult> {
   const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
   if (!existing) {
@@ -754,7 +755,13 @@ export async function updateJournalEntry(
   const entry = await prisma.$transaction(async (tx) => {
     const current = await tx.journalEntry.findFirst({
       where: { id: existing.id, company: { organizationId } },
-      select: { id: true, companyId: true, status: true },
+      select: {
+        id: true,
+        companyId: true,
+        status: true,
+        transactionCandidateId: true,
+        aiSuggestionId: true,
+      },
     });
 
     if (!current || current.companyId !== companyId) {
@@ -778,6 +785,37 @@ export async function updateJournalEntry(
     });
 
     await tx.journalEntryLine.deleteMany({ where: { journalEntryId: existing.id } });
+
+    if (current.transactionCandidateId && userId) {
+      const review = await tx.aIReviewRecord.findUnique({
+        where: { candidateId: current.transactionCandidateId },
+        select: { humanReviewStatus: true },
+      });
+
+      if (review) {
+        await tx.aIReviewRecord.update({
+          where: { candidateId: current.transactionCandidateId },
+          data: {
+            humanReviewStatus: "NEEDS_CORRECTION",
+            reviewedById: userId,
+            reviewedAt: new Date(),
+          },
+        });
+
+        await tx.aIReviewAudit.create({
+          data: {
+            candidateId: current.transactionCandidateId,
+            suggestionId: current.aiSuggestionId,
+            action: "EDITED",
+            userId,
+            previousHumanReviewStatus: review.humanReviewStatus,
+            newHumanReviewStatus: "NEEDS_CORRECTION",
+            relevantCorrection: "Draft Journal Entry edited by human; reconciliation must be re-checked.",
+            journalEntryId: current.id,
+          },
+        });
+      }
+    }
 
     if (input.lines.length > 0) {
       await tx.journalEntryLine.createMany({
@@ -835,7 +873,8 @@ export async function reorderJournalEntryLine(
   companyId: string,
   journalEntryId: string,
   journalEntryLineId: string,
-  direction: JournalLineMoveDirection
+  direction: JournalLineMoveDirection,
+  userId?: string
 ): Promise<JournalEntryResult> {
   const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
   if (!existing) return { ok: false, error: "Journal entry not found." };
@@ -854,7 +893,7 @@ export async function reorderJournalEntryLine(
   const result = await prisma.$transaction(async (tx) => {
     const current = await tx.journalEntry.findFirst({
       where: { id: journalEntryId, companyId, company: { organizationId } },
-      select: { id: true, companyId: true, status: true },
+      select: { id: true, companyId: true, status: true, transactionCandidateId: true, aiSuggestionId: true },
     });
 
     if (!current || current.companyId !== companyId) throw new Error("JOURNAL_ENTRY_NOT_FOUND");
@@ -900,6 +939,37 @@ export async function reorderJournalEntryLine(
     });
     for (let i = 0; i < normalized.length; i += 1) {
       await tx.journalEntryLine.update({ where: { id: normalized[i].id }, data: { lineNumber: i + 1 } });
+    }
+
+    if (current.transactionCandidateId && userId) {
+      const review = await tx.aIReviewRecord.findUnique({
+        where: { candidateId: current.transactionCandidateId },
+        select: { humanReviewStatus: true },
+      });
+
+      if (review) {
+        await tx.aIReviewRecord.update({
+          where: { candidateId: current.transactionCandidateId },
+          data: {
+            humanReviewStatus: "NEEDS_CORRECTION",
+            reviewedById: userId,
+            reviewedAt: new Date(),
+          },
+        });
+
+        await tx.aIReviewAudit.create({
+          data: {
+            candidateId: current.transactionCandidateId,
+            suggestionId: current.aiSuggestionId,
+            action: "EDITED",
+            userId,
+            previousHumanReviewStatus: review.humanReviewStatus,
+            newHumanReviewStatus: "NEEDS_CORRECTION",
+            relevantCorrection: "Draft Journal Entry line order changed by human; reconciliation must be re-checked.",
+            journalEntryId: current.id,
+          },
+        });
+      }
     }
 
     return tx.journalEntry.findUniqueOrThrow({

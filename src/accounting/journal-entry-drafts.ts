@@ -242,18 +242,35 @@ export async function createDraftJournalEntryFromSuggestion(
   // Journal Entry itself is already safely created and is the source of
   // truth, so a failure recording this metadata does not roll it back.
   try {
-    await prisma.aIReviewAudit.create({
-      data: {
-        candidateId: candidate.id,
-        suggestionId: latestSuggestion.id,
-        action: "DRAFT_CREATED",
-        provider: latestSuggestion.provider,
-        model: latestSuggestion.model,
-        contextVersion: latestSuggestion.contextVersion,
-        confidence: latestSuggestion.confidence,
-        userId,
-        journalEntryId: result.entry.id,
-      },
+    await prisma.$transaction(async (tx) => {
+      const currentReview = await tx.aIReviewRecord.findUnique({
+        where: { candidateId: candidate.id },
+        select: { humanReviewStatus: true },
+      });
+
+      if (currentReview) {
+        await tx.aIReviewRecord.update({
+          where: { candidateId: candidate.id },
+          data: { humanReviewStatus: "NEEDS_CORRECTION" },
+        });
+
+        await tx.aIReviewAudit.create({
+          data: {
+            candidateId: candidate.id,
+            suggestionId: latestSuggestion.id,
+            action: "DRAFT_CREATED",
+            provider: latestSuggestion.provider,
+            model: latestSuggestion.model,
+            contextVersion: latestSuggestion.contextVersion,
+            confidence: latestSuggestion.confidence,
+            userId,
+            journalEntryId: result.entry.id,
+            previousHumanReviewStatus: currentReview.humanReviewStatus,
+            newHumanReviewStatus: "NEEDS_CORRECTION",
+            relevantCorrection: "Draft created; journal requires human reconciliation before readiness.",
+          },
+        });
+      }
     });
   } catch {
     // Non-fatal — see comment above.

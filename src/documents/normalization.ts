@@ -297,7 +297,53 @@ export async function updateNormalizedCandidate(organizationId: string, companyI
       correctedAt: new Date(),
     };
     const updated = await prisma.normalizedTransactionCandidate.update({ where: { id: candidate.id }, data });
-    await prisma.aIReviewRecord.updateMany({ where: { candidateId: updated.id }, data: { status: "NOT_REVIEWED", decision: null, reviewedById: null, reviewedAt: null, humanAccountId: null, humanDebit: null, humanCredit: null, humanAmount: null, humanNotes: null } });
+
+    const review = await prisma.aIReviewRecord.findUnique({
+      where: { candidateId: updated.id },
+      select: { humanReviewStatus: true },
+    });
+    const latestSuggestion = await prisma.aIReviewSuggestion.findFirst({
+      where: { candidateId: updated.id },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, provider: true, model: true, contextVersion: true, confidence: true },
+    });
+
+    if (review) {
+      await prisma.$transaction(async (tx) => {
+        await tx.aIReviewRecord.update({
+          where: { candidateId: updated.id },
+          data: {
+            status: "NOT_REVIEWED",
+            humanReviewStatus: "PENDING_REVIEW",
+            decision: null,
+            reviewedById: null,
+            reviewedAt: null,
+            humanAccountId: null,
+            humanDebit: null,
+            humanCredit: null,
+            humanAmount: null,
+            humanNotes: null,
+          },
+        });
+
+        await tx.aIReviewAudit.create({
+          data: {
+            candidateId: updated.id,
+            suggestionId: latestSuggestion?.id ?? null,
+            action: "EDITED",
+            provider: latestSuggestion?.provider ?? null,
+            model: latestSuggestion?.model ?? null,
+            contextVersion: latestSuggestion?.contextVersion ?? null,
+            confidence: latestSuggestion?.confidence ?? null,
+            userId,
+            previousHumanReviewStatus: review.humanReviewStatus,
+            newHumanReviewStatus: "PENDING_REVIEW",
+            relevantCorrection: "Normalized source transaction corrected by human; AI review requires re-review.",
+          },
+        });
+      });
+    }
+
     return { ok: true as const, candidate: { id: updated.id } };
   } catch {
     return { ok: false as const, error: "Unable to save the correction. Check the values and try again." };

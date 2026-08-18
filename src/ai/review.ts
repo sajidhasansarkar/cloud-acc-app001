@@ -1,4 +1,4 @@
-import { Prisma, type AIReviewDecision } from "@prisma/client";
+import { Prisma, type AIReviewDecision, type HumanReviewStatus } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getOwnedAccount, getOwnedCompany } from "@/accounting/access";
@@ -85,8 +85,8 @@ export async function generateAccountingAISuggestion(
   const provider = getAccountingAIProvider();
   const review = await prisma.aIReviewRecord.upsert({
     where: { candidateId },
-    create: { candidateId, status: "REVIEWING", provider: provider.provider, model: provider.model, contextVersion: ACCOUNTING_REVIEW_VERSION, createdById: userId },
-    update: { status: "REVIEWING", provider: provider.provider, model: provider.model, contextVersion: ACCOUNTING_REVIEW_VERSION, createdById: userId, decision: null, reviewedById: null, reviewedAt: null, humanAccountId: null, humanDebit: null, humanCredit: null, humanAmount: null, humanNotes: null },
+    create: { candidateId, status: "REVIEWING", humanReviewStatus: "PENDING_REVIEW", provider: provider.provider, model: provider.model, contextVersion: ACCOUNTING_REVIEW_VERSION, createdById: userId },
+    update: { status: "REVIEWING", humanReviewStatus: "PENDING_REVIEW", provider: provider.provider, model: provider.model, contextVersion: ACCOUNTING_REVIEW_VERSION, createdById: userId, decision: null, reviewedById: null, reviewedAt: null, humanAccountId: null, humanDebit: null, humanCredit: null, humanAmount: null, humanNotes: null },
   });
 
   try {
@@ -140,6 +140,8 @@ export async function generateAccountingAISuggestion(
         contextVersion: ACCOUNTING_REVIEW_VERSION,
         confidence: suggestion.confidence,
         userId,
+        previousHumanReviewStatus: "PENDING_REVIEW",
+        newHumanReviewStatus: "PENDING_REVIEW",
       },
     });
 
@@ -170,7 +172,23 @@ export async function getAccountingAIReview(
       suggestions: { orderBy: { createdAt: "desc" }, take: 5, include: { suggestedAccount: { select: { id: true, code: true, name: true, type: true } } } },
       reviewedBy: { select: { id: true, name: true } },
       humanAccount: { select: { id: true, code: true, name: true, type: true } },
-      audits: { orderBy: { createdAt: "desc" }, take: 10, select: { id: true, action: true, provider: true, model: true, contextVersion: true, confidence: true, createdAt: true, user: { select: { id: true, name: true } } } },
+      audits: {
+        orderBy: { createdAt: "desc" },
+        take: 20,
+        select: {
+          id: true,
+          action: true,
+          provider: true,
+          model: true,
+          contextVersion: true,
+          confidence: true,
+          previousHumanReviewStatus: true,
+          newHumanReviewStatus: true,
+          relevantCorrection: true,
+          createdAt: true,
+          user: { select: { id: true, name: true } },
+        },
+      },
     },
   });
   return review;
@@ -202,10 +220,20 @@ async function recordHumanDecision(
   }
 
   await prisma.$transaction(async (tx) => {
+    const currentReview = await tx.aIReviewRecord.findUnique({
+      where: { candidateId },
+      select: { humanReviewStatus: true },
+    });
+    if (!currentReview) throw new Error("AI review record not found.");
+
+    const nextHumanStatus: HumanReviewStatus =
+      decision === "REJECTED" ? "REJECTED" : decision === "EDITED" ? "NEEDS_CORRECTION" : "PENDING_REVIEW";
+
     await tx.aIReviewRecord.update({
       where: { candidateId },
       data: {
         status: "REVIEWED",
+        humanReviewStatus: nextHumanStatus,
         decision,
         reviewedById: userId,
         reviewedAt: new Date(),
@@ -226,6 +254,9 @@ async function recordHumanDecision(
         contextVersion: latestSuggestion.contextVersion,
         confidence: latestSuggestion.confidence,
         userId,
+        previousHumanReviewStatus: currentReview.humanReviewStatus,
+        newHumanReviewStatus: nextHumanStatus,
+        relevantCorrection: values.notes?.trim() || null,
       },
     });
   });

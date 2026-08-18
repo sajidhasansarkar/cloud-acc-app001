@@ -19,7 +19,7 @@ export async function listDocuments(organizationId: string, companyId: string) {
 export async function getOwnedDocument(organizationId: string, companyId: string, documentId: string) {
   return prisma.document.findFirst({
     where: { id: documentId, organizationId, companyId, company: { organizationId } },
-    select: { id: true, storageKey: true, fileType: true, documentStatus: true },
+    select: { id: true, storageKey: true, fileType: true, mimeType: true, originalFileName: true, documentStatus: true },
   });
 }
 

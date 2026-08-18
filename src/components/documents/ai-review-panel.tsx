@@ -19,6 +19,7 @@ type ReviewStatus = "NOT_REVIEWED" | "READY" | "REVIEWING" | "REVIEWED" | "NEEDS
 type Account = { id: string; code: string; name: string; type: string };
 type Review = {
   status: ReviewStatus;
+  humanReviewStatus: "PENDING_REVIEW" | "NEEDS_CORRECTION" | "READY_FOR_POSTING" | "REJECTED";
   decision: "ACCEPTED" | "REJECTED" | "EDITED" | null;
   provider: string | null;
   model: string | null;
@@ -47,9 +48,9 @@ type Review = {
 };
 
 function badgeVariant(value: string) {
-  if (value === "HIGH" || value === "ACCEPTED") return "success" as const;
-  if (value === "MEDIUM" || value === "NEEDS_HUMAN_REVIEW") return "warning" as const;
-  if (value === "LOW" || value === "FAILED" || value === "REJECTED") return "danger" as const;
+  if (value === "HIGH" || value === "ACCEPTED" || value === "READY_FOR_POSTING") return "success" as const;
+  if (value === "MEDIUM" || value === "NEEDS_HUMAN_REVIEW" || value === "PENDING_REVIEW") return "warning" as const;
+  if (value === "LOW" || value === "FAILED" || value === "REJECTED" || value === "NEEDS_CORRECTION") return "danger" as const;
   return "default" as const;
 }
 
@@ -213,6 +214,7 @@ export function AIReviewPanel({
       <div className="min-w-48 space-y-2">
         <div className="flex items-center gap-2">
           <Badge variant={badgeVariant(currentStatus)}>{currentStatus.replaceAll("_", " ")}</Badge>
+          {review?.humanReviewStatus ? <Badge variant={badgeVariant(review.humanReviewStatus)}>{review.humanReviewStatus.replaceAll("_", " ")}</Badge> : null}
           {review?.decision ? <Badge variant={badgeVariant(review.decision)}>{review.decision}</Badge> : null}
         </div>
         {latest ? <div className="text-[10px] text-ink-500">{latest.suggestedAccount ? `${latest.suggestedAccount.code} — ${latest.suggestedAccount.name}` : "NO_SUITABLE_ACCOUNT"} · {latest.confidence}</div> : null}
@@ -224,7 +226,15 @@ export function AIReviewPanel({
         ) : null}
         {currentStatus === "REVIEWING" ? <span className="text-xs text-ink-500">Reviewing…</span> : null}
         {currentStatus === "NEEDS_HUMAN_REVIEW" || currentStatus === "REVIEWED" ? (
-          <Button size="sm" variant="outline" disabled={pending} onClick={openPanel}>View Review</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" disabled={pending} onClick={openPanel}>View Review</Button>
+            <Link
+              href={`/companies/${companyId}/ai-review/${candidateId}`}
+              className="inline-flex items-center rounded-md border border-ink-200 px-3 py-2 text-xs font-medium text-ink-800 hover:bg-surface-muted"
+            >
+              Reconcile Source / AI / Draft
+            </Link>
+          </div>
         ) : null}
       </div>
 

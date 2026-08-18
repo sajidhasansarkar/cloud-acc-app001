@@ -172,7 +172,7 @@ export async function updateJournalEntryAction(
     }[];
   }
 ): Promise<JournalEntryResult> {
-  const { role, organization } = await requireActiveOrganization();
+  const { role, user, organization } = await requireActiveOrganization();
 
   if (!canManageJournalEntries(role)) {
     return { ok: false, error: "You don't have permission to manage journal entries." };
@@ -183,7 +183,7 @@ export async function updateJournalEntryAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
 
-  const result = await updateJournalEntry(organization.id, parsed.data.companyId, journalEntryId, parsed.data);
+  const result = await updateJournalEntry(organization.id, parsed.data.companyId, journalEntryId, parsed.data, user.id);
 
   if (result.ok) {
     revalidatePath(`/companies/${parsed.data.companyId}/journal-entries`);
@@ -200,7 +200,7 @@ export async function reorderJournalEntryLineAction(
   journalEntryLineId: string,
   direction: "UP" | "DOWN"
 ): Promise<JournalEntryResult> {
-  const { role, organization } = await requireActiveOrganization();
+  const { role, user, organization } = await requireActiveOrganization();
 
   if (!canManageJournalEntries(role)) {
     return { ok: false, error: "You don't have permission to manage journal entries." };
@@ -215,7 +215,8 @@ export async function reorderJournalEntryLineAction(
     companyId,
     journalEntryId,
     journalEntryLineId,
-    direction
+    direction,
+    user.id
   );
 
   if (result.ok) {
