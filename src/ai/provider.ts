@@ -1,11 +1,11 @@
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import OpenAI from "openai";
 import type { NormalizationConfidence } from "@prisma/client";
 import type { AIReviewPayload } from "@/ai/context";
 
 export const ACCOUNTING_AI_PROVIDER = process.env.ACCOUNTING_AI_PROVIDER || "heuristic";
 export const ACCOUNTING_AI_MODEL =
   process.env.ACCOUNTING_AI_MODEL ||
-  (process.env.ACCOUNTING_AI_PROVIDER === "gemini" ? "gemini-2.5-flash" : "accounting-review-v1");
+  (process.env.ACCOUNTING_AI_PROVIDER === "openai" ? "gpt-4o-mini" : "accounting-review-v1");
 export const ACCOUNTING_REVIEW_VERSION = "accounting-review-v1";
 
 export type AccountingAISuggestion = {
@@ -139,45 +139,44 @@ export class HeuristicAccountingAIProvider implements AccountingAIProvider {
   }
 }
 
-// Gemini's structured-output schema. Deliberately narrow: the model only
+// OpenAI's structured-output schema. Deliberately narrow: the model only
 // picks an account, explains itself, and flags concerns — it never
 // generates monetary values. Debit/credit/amount are always taken verbatim
 // from the normalized transaction candidate (see `review()` below), so a
 // hallucinated number can never reach the persistence layer in
 // review.ts, which independently re-validates everything against the
 // candidate and the company's Chart of Accounts regardless.
-const geminiSuggestionSchema = {
-  type: SchemaType.OBJECT,
+const openAISuggestionSchema = {
+  type: "object",
   properties: {
     suggestedAccountId: {
-      type: SchemaType.STRING,
-      description: "The id of the single best-matching account from accountingContext.relevantAccounts, or omit if none is a reasonable match.",
-      nullable: true,
+      type: ["string", "null"],
+      description: "The id of the single best-matching account from accountingContext.relevantAccounts, or null if none is a reasonable match.",
     },
     confidence: {
-      type: SchemaType.STRING,
-      format: "enum",
+      type: "string",
       enum: ["HIGH", "MEDIUM", "LOW"],
     },
     explanation: {
-      type: SchemaType.STRING,
+      type: "string",
       description: "One or two sentences explaining why this account was chosen.",
     },
     warnings: {
-      type: SchemaType.ARRAY,
-      items: { type: SchemaType.STRING },
+      type: "array",
+      items: { type: "string" },
       description: "Any concerns a human reviewer should know about (ambiguity, missing context, unusual transaction, etc). Empty array if none.",
     },
     alternativeAccountIds: {
-      type: SchemaType.ARRAY,
-      items: { type: SchemaType.STRING },
+      type: "array",
+      items: { type: "string" },
       description: "Up to 3 other plausible account ids from relevantAccounts, ordered best first, excluding suggestedAccountId.",
     },
   },
-  required: ["confidence", "explanation", "warnings", "alternativeAccountIds"],
+  required: ["suggestedAccountId", "confidence", "explanation", "warnings", "alternativeAccountIds"],
+  additionalProperties: false,
 } as const;
 
-type GeminiSuggestionResponse = {
+type OpenAISuggestionResponse = {
   suggestedAccountId?: string | null;
   confidence: NormalizationConfidence;
   explanation: string;
@@ -185,7 +184,7 @@ type GeminiSuggestionResponse = {
   alternativeAccountIds: string[];
 };
 
-function buildGeminiPrompt(payload: AIReviewPayload): string {
+function buildOpenAIPrompt(payload: AIReviewPayload): string {
   return [
     "You are an accounting assistant helping a bookkeeper map a bank/document transaction to the correct account in a company's Chart of Accounts.",
     "You must choose only from the accounts listed in `relevantAccounts` below — never invent an account id, code, or name.",
@@ -205,47 +204,52 @@ function buildGeminiPrompt(payload: AIReviewPayload): string {
 }
 
 /**
- * Google Gemini-backed provider. Implements the same
- * AccountingAIProvider contract as the heuristic fallback, so nothing in
- * review.ts, persistence, or the audit trail needs to change.
+ * OpenAI-backed provider. Implements the same AccountingAIProvider
+ * contract as the heuristic fallback, so nothing in review.ts,
+ * persistence, or the audit trail needs to change.
  *
- * Design choice: Gemini only ever selects an account and explains/flags —
+ * Design choice: OpenAI only ever selects an account and explains/flags —
  * it never generates suggestedDebit/suggestedCredit/suggestedAmount. Those
  * always come straight from the normalized transactionCandidate, which
  * both avoids hallucinated monetary values and satisfies review.ts's
  * validateAgainstCandidate() check, which requires suggested amounts to
  * exactly match the source candidate whenever one is present.
  */
-export class GeminiAccountingAIProvider implements AccountingAIProvider {
-  readonly provider = "gemini";
+export class OpenAIAccountingAIProvider implements AccountingAIProvider {
+  readonly provider = "openai";
   readonly model = ACCOUNTING_AI_MODEL;
 
-  private readonly client: GoogleGenerativeAI;
+  private readonly client: OpenAI;
 
   constructor() {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
-    this.client = new GoogleGenerativeAI(apiKey);
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.");
+    this.client = new OpenAI({ apiKey });
   }
 
   async review(payload: AIReviewPayload): Promise<AccountingAISuggestion> {
-    const model = this.client.getGenerativeModel({
+    const completion = await this.client.chat.completions.create({
       model: this.model,
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: geminiSuggestionSchema,
-        temperature: 0.1,
+      temperature: 0.1,
+      messages: [{ role: "user", content: buildOpenAIPrompt(payload) }],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "accounting_review_suggestion",
+          schema: openAISuggestionSchema,
+          strict: true,
+        },
       },
     });
 
-    const result = await model.generateContent(buildGeminiPrompt(payload));
-    const text = result.response.text();
+    const text = completion.choices[0]?.message?.content;
+    if (!text) throw new Error("OpenAI returned an empty response.");
 
-    let parsed: GeminiSuggestionResponse;
+    let parsed: OpenAISuggestionResponse;
     try {
       parsed = JSON.parse(text);
     } catch {
-      throw new Error("Gemini returned a response that could not be parsed as JSON.");
+      throw new Error("OpenAI returned a response that could not be parsed as JSON.");
     }
 
     const relevantById = new Map(payload.accountingContext.relevantAccounts.map((account) => [account.id, account]));
@@ -260,7 +264,7 @@ export class GeminiAccountingAIProvider implements AccountingAIProvider {
 
     let suggestedAccountId = parsed.suggestedAccountId || undefined;
     if (suggestedAccountId && !relevantById.has(suggestedAccountId)) {
-      // Gemini hallucinated an id outside the provided list — do not trust it.
+      // OpenAI hallucinated an id outside the provided list — do not trust it.
       // review.ts would reject this anyway, but fail closed here with a
       // clearer signal and fall back to "no suitable account".
       suggestedAccountId = undefined;
@@ -328,7 +332,7 @@ export class GeminiAccountingAIProvider implements AccountingAIProvider {
 
 export function getAccountingAIProvider(): AccountingAIProvider {
   if (ACCOUNTING_AI_PROVIDER === "heuristic") return new HeuristicAccountingAIProvider();
-  if (ACCOUNTING_AI_PROVIDER === "gemini") return new GeminiAccountingAIProvider();
+  if (ACCOUNTING_AI_PROVIDER === "openai") return new OpenAIAccountingAIProvider();
   throw new Error(`Unsupported accounting AI provider: ${ACCOUNTING_AI_PROVIDER}`);
 }
 
