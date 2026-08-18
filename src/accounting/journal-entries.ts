@@ -509,6 +509,237 @@ export async function getJournalEntry(organizationId: string, companyId: string,
  * search/filter UI (spec section 11) will realistically narrow by — none
  * required, and none implement any real search/filter UI here.
  */
+
+export type ReadyForPostingSort = "entryDate" | "entryNumber" | "totalDebit" | "totalCredit";
+
+export type ListReadyForPostingInput = {
+  search?: string;
+  date?: Date;
+  fiscalYearId?: string;
+  accountingPeriodId?: string;
+  status?: JournalEntryStatus;
+  sort?: ReadyForPostingSort;
+  direction?: "asc" | "desc";
+  page?: number;
+  pageSize?: number;
+};
+
+export type ReadyForPostingRow = {
+  id: string;
+  entryNumber: string;
+  entryDate: Date;
+  reference: string | null;
+  description: string | null;
+  fiscalYearId: string;
+  fiscalYearName: string;
+  fiscalYearStatus: "OPEN" | "CLOSED" | "LOCKED";
+  accountingPeriodId: string;
+  accountingPeriodName: string;
+  accountingPeriodStatus: "OPEN" | "CLOSED" | "LOCKED";
+  status: "READY_FOR_POSTING";
+  totalDebit: string;
+  totalCredit: string;
+  difference: string;
+  readinessErrors: string[];
+};
+
+export type ReadyForPostingListResult = {
+  entries: ReadyForPostingRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  summary: {
+    totalEntries: number;
+    totalDebit: string;
+    totalCredit: string;
+  };
+};
+
+/**
+ * Phase 4B-9: server-side Ready-for-Posting queue. The query is always
+ * company/organization scoped and only selects READY_FOR_POSTING entries.
+ * Totals and total-debit/credit sorting are calculated in PostgreSQL so the
+ * browser never receives the full queue just to paginate or sort it.
+ */
+export async function listReadyForPostingJournalEntries(
+  organizationId: string,
+  companyId: string,
+  input: ListReadyForPostingInput = {}
+): Promise<ReadyForPostingListResult | null> {
+  const company = await getOwnedCompany(organizationId, companyId);
+  if (!company) return null;
+
+  const pageSize = Math.min(Math.max(input.pageSize ?? 25, 1), 100);
+  const page = Math.max(input.page ?? 1, 1);
+  const sort = input.sort ?? "entryDate";
+  const direction = input.direction === "asc" ? "asc" : "desc";
+  const conditions: Prisma.Sql[] = [
+    Prisma.sql`je."companyId" = ${company.id}`,
+    Prisma.sql`je."status" = 'READY_FOR_POSTING'`,
+  ];
+
+  const search = input.search?.trim();
+  if (search) {
+    conditions.push(Prisma.sql`(
+      je."entryNumber" ILIKE '%' || ${search} || '%'
+      OR COALESCE(je."reference", '') ILIKE '%' || ${search} || '%'
+      OR COALESCE(je."description", '') ILIKE '%' || ${search} || '%'
+    )`);
+  }
+  if (input.date) {
+    const start = startOfUtcDay(input.date);
+    const end = endOfUtcDay(input.date);
+    conditions.push(Prisma.sql`je."entryDate" >= ${start} AND je."entryDate" < ${end}`);
+  }
+  if (input.fiscalYearId) conditions.push(Prisma.sql`je."fiscalYearId" = ${input.fiscalYearId}`);
+  if (input.accountingPeriodId) conditions.push(Prisma.sql`je."accountingPeriodId" = ${input.accountingPeriodId}`);
+  if (input.status && input.status !== "READY_FOR_POSTING") return {
+    entries: [],
+    total: 0,
+    page: 1,
+    pageSize,
+    totalPages: 0,
+    summary: { totalEntries: 0, totalDebit: "0.0000", totalCredit: "0.0000" },
+  };
+
+  const whereSql = Prisma.join(conditions, " AND ");
+  const orderColumn = sort === "entryNumber"
+    ? Prisma.raw('je."entryNumber"')
+    : sort === "totalDebit"
+      ? Prisma.raw('total_debit')
+      : sort === "totalCredit"
+        ? Prisma.raw('total_credit')
+        : Prisma.raw('je."entryDate"');
+  const directionSql = Prisma.raw(direction.toUpperCase());
+  const offset = (page - 1) * pageSize;
+
+  type QueueDbRow = {
+    id: string;
+    entryNumber: string;
+    entryDate: Date;
+    reference: string | null;
+    description: string | null;
+    fiscalYearId: string;
+    fiscalYearName: string;
+    fiscalYearStatus: "OPEN" | "CLOSED" | "LOCKED";
+    accountingPeriodId: string;
+    accountingPeriodName: string;
+    accountingPeriodStatus: "OPEN" | "CLOSED" | "LOCKED";
+    status: "READY_FOR_POSTING";
+    totalDebit: Prisma.Decimal;
+    totalCredit: Prisma.Decimal;
+    difference: Prisma.Decimal;
+    totalCount: bigint;
+  };
+
+  const rows = await prisma.$queryRaw<QueueDbRow[]>(Prisma.sql`
+    SELECT
+      je."id" AS id,
+      je."entryNumber" AS "entryNumber",
+      je."entryDate" AS "entryDate",
+      je."reference" AS reference,
+      je."description" AS description,
+      fy."id" AS "fiscalYearId",
+      fy."name" AS "fiscalYearName",
+      fy."status" AS "fiscalYearStatus",
+      ap."id" AS "accountingPeriodId",
+      ap."name" AS "accountingPeriodName",
+      ap."status" AS "accountingPeriodStatus",
+      je."status" AS status,
+      COALESCE(SUM(jel."debit"), 0) AS total_debit,
+      COALESCE(SUM(jel."credit"), 0) AS total_credit,
+      COALESCE(SUM(jel."debit"), 0) - COALESCE(SUM(jel."credit"), 0) AS difference,
+      COUNT(*) OVER() AS "totalCount"
+    FROM "journal_entries" je
+    INNER JOIN "fiscal_years" fy ON fy."id" = je."fiscalYearId"
+    INNER JOIN "accounting_periods" ap ON ap."id" = je."accountingPeriodId"
+    LEFT JOIN "journal_entry_lines" jel ON jel."journalEntryId" = je."id"
+    WHERE ${whereSql}
+    GROUP BY
+      je."id", je."entryNumber", je."entryDate", je."reference", je."description",
+      fy."id", fy."name", fy."status", ap."id", ap."name", ap."status", je."status"
+    ORDER BY ${orderColumn} ${directionSql}, je."id" ASC
+    LIMIT ${pageSize} OFFSET ${offset}
+  `);
+
+  const summaryRows = await prisma.$queryRaw<Array<{ totalEntries: bigint; totalDebit: Prisma.Decimal; totalCredit: Prisma.Decimal }>>(Prisma.sql`
+    SELECT
+      COUNT(DISTINCT je."id") AS "totalEntries",
+      COALESCE(SUM(jel."debit"), 0) AS "totalDebit",
+      COALESCE(SUM(jel."credit"), 0) AS "totalCredit"
+    FROM "journal_entries" je
+    LEFT JOIN "journal_entry_lines" jel ON jel."journalEntryId" = je."id"
+    WHERE ${whereSql}
+  `);
+
+  const total = rows[0] ? Number(rows[0].totalCount) : Number(summaryRows[0]?.totalEntries ?? 0);
+  const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+  const safePage = totalPages > 0 ? Math.min(page, totalPages) : 1;
+
+  const entries: ReadyForPostingRow[] = [];
+  for (const row of rows) {
+    const readyCheck = await validateReadyForPostingJournalEntry(organizationId, company.id, row.id);
+    const readinessErrors = readyCheck.valid ? [] : readyCheck.errors;
+    entries.push({
+      id: row.id,
+      entryNumber: row.entryNumber,
+      entryDate: row.entryDate,
+      reference: row.reference,
+      description: row.description,
+      fiscalYearId: row.fiscalYearId,
+      fiscalYearName: row.fiscalYearName,
+      fiscalYearStatus: row.fiscalYearStatus,
+      accountingPeriodId: row.accountingPeriodId,
+      accountingPeriodName: row.accountingPeriodName,
+      accountingPeriodStatus: row.accountingPeriodStatus,
+      status: "READY_FOR_POSTING",
+      totalDebit: row.totalDebit.toFixed(4),
+      totalCredit: row.totalCredit.toFixed(4),
+      difference: row.difference.toFixed(4),
+      readinessErrors: [...new Set(readinessErrors)],
+    });
+  }
+
+  const summary = summaryRows[0];
+  return {
+    entries,
+    total,
+    page: safePage,
+    pageSize,
+    totalPages,
+    summary: {
+      totalEntries: Number(summary?.totalEntries ?? 0),
+      totalDebit: (summary?.totalDebit ?? new Prisma.Decimal(0)).toFixed(4),
+      totalCredit: (summary?.totalCredit ?? new Prisma.Decimal(0)).toFixed(4),
+    },
+  };
+}
+
+/**
+ * Re-checks a READY_FOR_POSTING entry immediately before any future posting
+ * preparation. A closed/locked fiscal year or accounting period makes the
+ * previously-approved entry stale and requires human review again.
+ */
+export async function validateReadyForPostingJournalEntry(
+  organizationId: string,
+  companyId: string,
+  journalEntryId: string
+): Promise<{ valid: true } | { valid: false; errors: string[] }> {
+  const entry = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
+  if (!entry) return { valid: false, errors: ["Journal entry not found."] };
+  if (entry.status !== "READY_FOR_POSTING") {
+    return { valid: false, errors: ["This journal entry requires review before posting."] };
+  }
+
+  const validation = await validateJournalEntryForReview(organizationId, journalEntryId);
+  const errors = [...validation.errors];
+  if (entry.fiscalYear.status !== "OPEN") errors.push(`Fiscal year is ${entry.fiscalYear.status.toLowerCase()}.`);
+  if (entry.accountingPeriod.status !== "OPEN") errors.push(`Accounting period is ${entry.accountingPeriod.status.toLowerCase()}.`);
+
+  return errors.length ? { valid: false, errors: [...new Set(errors)] } : { valid: true };
+}
+
 export type JournalEntryListSort =
   | "entryDate"
   | "entryNumber"

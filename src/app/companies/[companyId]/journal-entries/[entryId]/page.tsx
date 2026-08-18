@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Pencil, ListChecks } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Pencil, ListChecks } from "lucide-react";
 import { requireActiveOrganization } from "@/lib/session";
 import { requireOwnedCompany } from "@/lib/company-guard";
-import { getJournalEntry, validateJournalEntryBalance, validateJournalEntryForReview } from "@/accounting/journal-entries";
+import { getJournalEntry, validateJournalEntryBalance, validateJournalEntryForReview, validateReadyForPostingJournalEntry } from "@/accounting/journal-entries";
 import { canManageJournalEntries, canReviewJournalEntries } from "@/lib/rbac";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
@@ -68,6 +68,9 @@ export default async function JournalEntryDetailPage({
           : "Journal entry is not balanced.";
   const reviewValidation = await validateJournalEntryForReview(organization.id, entry.id);
   const reviewErrors = reviewValidation.valid ? [] : reviewValidation.errors;
+  const readyCheck = entry.status === "READY_FOR_POSTING"
+    ? await validateReadyForPostingJournalEntry(organization.id, company.id, entry.id)
+    : null;
 
   return (
     <div className="space-y-6">
@@ -136,6 +139,20 @@ export default async function JournalEntryDetailPage({
           <Field label="Updated Date" value={formatDate(entry.updatedAt)} />
         </CardContent>
       </Card>
+
+      {readyCheck && !readyCheck.valid ? (
+        <div className="rounded-lg border border-negative/20 bg-negative/5 px-4 py-3 text-sm text-ink-800">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-negative" />
+            <div>
+              <p className="font-semibold">This journal entry requires review before posting.</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink-700">
+                {readyCheck.errors.map((error) => <li key={error}>{error}</li>)}
+              </ul>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {entry.status === "IN_REVIEW" ? (
         <div className="rounded-lg border border-pending/20 bg-pending/5 px-4 py-3 text-sm text-ink-800">

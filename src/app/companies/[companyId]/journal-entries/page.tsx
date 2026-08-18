@@ -5,7 +5,7 @@ import { requireOwnedCompany } from "@/lib/company-guard";
 import { listJournalEntries, listJournalEntryLabels } from "@/accounting/journal-entries";
 import { listFiscalYears } from "@/accounting/fiscal-years";
 import { listAccountingPeriods } from "@/accounting/accounting-periods";
-import { canManageJournalEntries } from "@/lib/rbac";
+import { canManageJournalEntries, canReviewJournalEntries } from "@/lib/rbac";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { JournalEntriesTable } from "@/components/journal-entries/journal-entries-table";
@@ -180,12 +180,19 @@ export default async function CompanyJournalEntriesPage({
           <h1 className="font-display text-xl font-semibold text-ink-900">Journal Entries</h1>
           <p className="text-sm text-ink-500">Manual and automated journal entries for {company.displayName}.</p>
         </div>
-        {canManage ? (
-          <Link href={`${basePath}/new`} className={buttonVariants({ variant: "primary" })}>
-            <Plus className="h-4 w-4" />
-            New Journal Entry
-          </Link>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {canReviewJournalEntries(role) ? (
+            <Link href={`${basePath}/ready-for-posting`} className={buttonVariants({ variant: "outline" })}>
+              Ready for Posting
+            </Link>
+          ) : null}
+          {canManage ? (
+            <Link href={`${basePath}/new`} className={buttonVariants({ variant: "primary" })}>
+              <Plus className="h-4 w-4" />
+              New Journal Entry
+            </Link>
+          ) : null}
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-ink-100 bg-white shadow-card">
