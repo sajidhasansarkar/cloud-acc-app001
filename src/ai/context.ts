@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getOwnedCompany } from "@/accounting/access";
-import type { AIReviewStatus, NormalizationConfidence, Prisma } from "@prisma/client";
+import type { NormalizationConfidence, Prisma } from "@prisma/client";
 
 export const AI_CONTEXT_VERSION = "v1";
 const MAX_RELEVANT_ACCOUNTS = 12;
@@ -48,14 +48,6 @@ export type AIReviewPayload = {
     rowNumber: number | null;
     sourceRowReference: string;
   };
-};
-
-export type AIReviewReadiness = {
-  status: AIReviewStatus;
-  confidence: NormalizationConfidence;
-  warningCount: number;
-  sourceReference: string;
-  contextVersion: string;
 };
 
 function toOptionalString(value: Prisma.Decimal | string | null | undefined) {
@@ -212,49 +204,4 @@ export async function buildAccountingAIContext(
   };
 }
 
-export async function prepareAIReview(
-  organizationId: string,
-  companyId: string,
-  documentId: string,
-  candidateId: string,
-  userId: string
-) {
-  const payload = await buildAccountingAIContext(organizationId, companyId, documentId, candidateId);
-  if (!payload) return { ok: false as const, error: "Transaction candidate not found." };
 
-  const warningCount = payload.transactionCandidate.warnings.length;
-  const status: AIReviewStatus = payload.transactionCandidate.confidence === "LOW" || warningCount > 0 ? "NEEDS_HUMAN_REVIEW" : "READY";
-
-  const review = await prisma.aIReviewRecord.upsert({
-    where: { candidateId },
-    create: { candidateId, status, contextVersion: AI_CONTEXT_VERSION, createdById: userId },
-    update: { status, contextVersion: AI_CONTEXT_VERSION, createdById: userId },
-    select: { status: true, contextVersion: true },
-  });
-
-  return { ok: true as const, status: review.status, contextVersion: review.contextVersion };
-}
-
-export async function getAIReviewReadiness(
-  organizationId: string,
-  companyId: string,
-  documentId: string,
-  candidateId: string
-): Promise<AIReviewReadiness | null> {
-  const candidate = await loadCandidateScope(organizationId, companyId, documentId, candidateId);
-  if (!candidate) return null;
-  const review = await prisma.aIReviewRecord.findUnique({ where: { candidateId }, select: { status: true, contextVersion: true } });
-  const warnings = Array.isArray(candidate.warnings) ? candidate.warnings.map(String) : [];
-  const source = candidate.sourceSheetName
-    ? `Sheet: ${candidate.sourceSheetName}${candidate.sourceRowNumber ? ` · Row: ${candidate.sourceRowNumber}` : ""}`
-    : candidate.sourcePageNumber
-      ? `Page: ${candidate.sourcePageNumber}${candidate.sourceRowNumber ? ` · Row: ${candidate.sourceRowNumber}` : ""}`
-      : candidate.sourceRowReference;
-  return {
-    status: review?.status ?? "NOT_REVIEWED",
-    confidence: candidate.confidence,
-    warningCount: warnings.length,
-    sourceReference: source,
-    contextVersion: review?.contextVersion ?? AI_CONTEXT_VERSION,
-  };
-}

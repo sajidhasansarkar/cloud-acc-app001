@@ -6,7 +6,7 @@ import { requireActiveOrganization } from "@/lib/session";
 import { getOwnedCompany } from "@/accounting/access";
 import { prisma } from "@/lib/prisma";
 import { canManageDocuments, canReviewAI } from "@/lib/rbac";
-import { buildAccountingAIContext, prepareAIReview } from "@/ai/context";
+import { buildAccountingAIContext } from "@/ai/context";
 import { acceptAccountingAISuggestion, editAccountingAISuggestion, generateAccountingAISuggestion, getAccountingAIReview, rejectAccountingAISuggestion } from "@/ai/review";
 
 type AIReviewSuggestionWithAccount = Prisma.AIReviewSuggestionGetPayload<{
@@ -27,17 +27,6 @@ type AIReviewAuditWithUser = Prisma.AIReviewAuditGetPayload<{
     user: { select: { id: true, name: true } };
   };
 }>;
-
-export async function prepareAIReviewAction(companyId: string, documentId: string, candidateId: string) {
-  const { role, user, organization } = await requireActiveOrganization();
-  if (!canManageDocuments(role)) return { ok: false as const, error: "You don't have permission to prepare AI review context." };
-  const company = await getOwnedCompany(organization.id, companyId);
-  if (!company) return { ok: false as const, error: "Company not found." };
-  const result = await prepareAIReview(organization.id, company.id, documentId, candidateId, user.id);
-  if (!result.ok) return result;
-  revalidatePath(`/companies/${company.id}/documents/${documentId}`);
-  return result;
-}
 
 export async function generateAIReviewAction(companyId: string, documentId: string, candidateId: string) {
   const { role, user, organization } = await requireActiveOrganization();
