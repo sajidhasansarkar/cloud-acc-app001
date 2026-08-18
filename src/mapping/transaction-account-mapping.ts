@@ -1,4 +1,4 @@
-import { Prisma, type NormalizationConfidence, type JournalPreparationStatus, type AccountMappingSource } from "@prisma/client";
+import { Prisma, type NormalizationConfidence, type JournalPreparationStatus, type AccountMappingSource, type AccountType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getOwnedAccount, getOwnedCompany, getOwnedTransactionCandidate } from "@/accounting/access";
 import { getAccountingAIProvider, ACCOUNTING_REVIEW_VERSION } from "@/ai/provider";
@@ -145,7 +145,21 @@ export async function searchCompanyAccounts(organizationId: string, companyId: s
   if (!company) return null;
   const q = query.trim();
   if (!q) return prisma.account.findMany({ where: { companyId: company.id, isActive: true }, select: { id: true, code: true, name: true, type: true, subtype: true, description: true }, orderBy: { code: "asc" }, take: 50 });
-  return prisma.account.findMany({ where: { companyId: company.id, isActive: true, OR: [{ code: { contains: q, mode: "insensitive" } }, { name: { contains: q, mode: "insensitive" } }, { type: { contains: q, mode: "insensitive" } }, { subtype: { contains: q, mode: "insensitive" } }, { description: { contains: q, mode: "insensitive" } }] }, select: { id: true, code: true, name: true, type: true, subtype: true, description: true }, orderBy: { code: "asc" }, take: 50 });
+  const accountTypes: AccountType[] = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"];
+  const matchedType = accountTypes.find((t) => t.toLowerCase() === q.toLowerCase() || t.toLowerCase().includes(q.toLowerCase()));
+  return prisma.account.findMany({
+    where: {
+      companyId: company.id, isActive: true,
+      OR: [
+        { code: { contains: q, mode: "insensitive" } },
+        { name: { contains: q, mode: "insensitive" } },
+        ...(matchedType ? [{ type: matchedType }] : []),
+        { subtype: { contains: q, mode: "insensitive" } },
+        { description: { contains: q, mode: "insensitive" } },
+      ],
+    },
+    select: { id: true, code: true, name: true, type: true, subtype: true, description: true }, orderBy: { code: "asc" }, take: 50,
+  });
 }
 
 export async function selectMappedAccount(organizationId: string, companyId: string, documentId: string, candidateId: string, side: "DEBIT" | "CREDIT", accountId: string, userId: string) {
