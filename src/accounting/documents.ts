@@ -22,20 +22,33 @@ async function audit(documentId: string, organizationId: string, companyId: stri
 
 export async function listDocuments(organizationId: string, companyId: string, page = 1) {
   const safePage = Math.max(1, Number.isFinite(page) ? Math.floor(page) : 1);
-  const [documents, total] = await prisma.$transaction([
-    prisma.document.findMany({
-      where: { organizationId, companyId, company: { organizationId } },
-      select: {
-        id: true, originalFileName: true, fileType: true, mimeType: true, fileSize: true, documentStatus: true, createdAt: true,
-        uploadedBy: { select: { name: true } },
-      },
-      orderBy: { createdAt: "desc" },
-      skip: (safePage - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-    }),
-    prisma.document.count({ where: { organizationId, companyId, company: { organizationId } } }),
-  ]);
-  return { documents, total, page: safePage, pageSize: PAGE_SIZE, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)) };
+  const where = { organizationId, companyId };
+
+  // The Document row already contains both tenant ownership keys. Do not add
+  // a second ownership hop through Company here: apart from being redundant,
+  // that relation filter can make an otherwise valid documents query fail when
+  // a deployed Prisma schema/database is briefly out of sync.
+  try {
+    const [documents, total] = await prisma.$transaction([
+      prisma.document.findMany({
+        where,
+        select: {
+          id: true, originalFileName: true, fileType: true, mimeType: true, fileSize: true, documentStatus: true, createdAt: true,
+          uploadedBy: { select: { name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        skip: (safePage - 1) * PAGE_SIZE,
+        take: PAGE_SIZE,
+      }),
+      prisma.document.count({ where }),
+    ]);
+    return { documents, total, page: safePage, pageSize: PAGE_SIZE, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)) };
+  } catch (error) {
+    // Keep the user-facing page generic, but make the real server error
+    // visible in Vercel logs for diagnosis instead of silently swallowing it.
+    console.error("Failed to list company documents", { organizationId, companyId, page: safePage, error });
+    throw error;
+  }
 }
 
 export async function getOwnedDocument(organizationId: string, companyId: string, documentId: string) {
