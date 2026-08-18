@@ -29,7 +29,8 @@
     "zod": "^3.23.8",
     "pdf-parse": "^1.1.1",
     "xlsx": "^0.18.5",
-    "@vercel/blob": "^2.6.1"
+    "@vercel/blob": "^2.6.1",
+    "@google/generative-ai": "^0.21.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
