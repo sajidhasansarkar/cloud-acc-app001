@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { COMPANY_NAV_ITEMS } from "@/lib/company-nav";
+import { ReportsDropdown } from "@/components/companies/reports-dropdown";
 import { cn } from "@/lib/utils";
 
 export function CompanySidebar({
@@ -31,6 +32,9 @@ export function CompanySidebar({
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         <ul className="space-y-0.5">
           {COMPANY_NAV_ITEMS.map((item) => {
+            if (item.label === "Reports") {
+              return <li key={item.label}><ReportsDropdown companyId={companyId} /></li>;
+            }
             const href = item.segment ? `${basePath}/${item.segment}` : basePath;
             const isActive = item.segment ? pathname.startsWith(href) : pathname === basePath;
             const Icon = item.icon;

@@ -1,4 +1,5 @@
 import { UserMenu } from "@/components/dashboard/user-menu";
+import { ReportsDropdown } from "@/components/companies/reports-dropdown";
 import { CompanySelector, type CompanySelectorItem } from "@/components/companies/company-selector";
 import type { Role } from "@/lib/rbac";
 
@@ -27,6 +28,7 @@ export function Topbar({
           activeCompanyId={activeCompanyId}
           basePath={companySwitcherBasePath}
         />
+        {activeCompanyId && <ReportsDropdown companyId={activeCompanyId} className="lg:hidden w-44" />}
       </div>
       <UserMenu name={user.name} email={user.email} role={user.role} />
     </header>
