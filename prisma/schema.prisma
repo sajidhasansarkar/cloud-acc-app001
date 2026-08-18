@@ -633,7 +633,6 @@ model CountryConfiguration {
   updatedAt DateTime @updatedAt
 
   companies Company[]
-  documentAuditEvents DocumentAuditEvent[]
 
   @@map("country_configurations")
 }
