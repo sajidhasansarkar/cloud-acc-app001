@@ -5,7 +5,6 @@ import {
   BookText,
   Landmark,
   ListTree,
-  Scale,
   FileBarChart,
   ListChecks,
   ReceiptText,

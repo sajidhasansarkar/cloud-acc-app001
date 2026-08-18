@@ -14,11 +14,38 @@ const REPORTS = [
   { label: "Cash Flow", segment: "cash-flow", icon: WalletCards },
 ];
 
-export function ReportsDropdown({ companyId, className }: { companyId: string; className?: string }) {
+export function ReportsDropdown({
+  companyId,
+  className,
+  collapsed = false,
+}: {
+  companyId: string;
+  className?: string;
+  // Icon-only mode for use inside a collapsed sidebar. The dropdown's
+  // expanding submenu doesn't have room to lay out there, so this renders
+  // as a single link to the reports index instead of a toggle + menu.
+  collapsed?: boolean;
+}) {
   const pathname = usePathname();
   const basePath = `/companies/${companyId}`;
   const activeReport = REPORTS.find((report) => pathname.startsWith(`${basePath}/${report.segment}`));
   const inReportsSection = Boolean(activeReport) || pathname.startsWith(`${basePath}/reports`);
+
+  if (collapsed) {
+    return (
+      <Link
+        href={`${basePath}/reports`}
+        title="Reports"
+        className={cn(
+          "flex items-center justify-center rounded px-2 py-1.5 text-sm transition-colors",
+          inReportsSection ? "bg-ink-800 text-white" : "text-ink-300 hover:bg-ink-900 hover:text-white",
+          className
+        )}
+      >
+        <FileBarChart className="h-4 w-4 shrink-0" />
+      </Link>
+    );
+  }
 
   // The dropdown lives in a layout that stays mounted across navigation
   // within the company workspace, so a plain "closed by default" state
