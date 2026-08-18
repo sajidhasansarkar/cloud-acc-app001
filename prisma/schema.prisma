@@ -792,7 +792,6 @@ model NormalizedTransactionCandidate {
   aiReview AIReviewRecord?
   aiReviewSuggestions AIReviewSuggestion[]
   aiReviewAudits AIReviewAudit[]
-  journalEntriesPosted JournalEntry[] @relation("JournalEntryPostedBy")
   // Phase 4B-6 traceability: Draft Journal Entries created from this
   // candidate's accepted AI suggestion (duplicate-protected — see
   // JournalEntry.transactionCandidateId).

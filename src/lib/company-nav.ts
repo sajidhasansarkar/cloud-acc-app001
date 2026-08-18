@@ -42,6 +42,7 @@ export const COMPANY_NAV_ITEMS: CompanyNavItem[] = [
   { label: "Chart of Accounts", segment: "chart-of-accounts", icon: ListTree, implemented: true },
   { label: "General Ledger", segment: "general-ledger", icon: BookOpenCheck, implemented: true },
   { label: "Trial Balance", segment: "trial-balance", icon: Scale, implemented: true },
+  { label: "Balance Sheet", segment: "balance-sheet", icon: Scale, implemented: true },
   { label: "Reports", segment: "reports", icon: FileBarChart, implemented: false },
   { label: "Bank Reconciliation", segment: "bank-reconciliation", icon: ListChecks, implemented: false },
   { label: "Tax", segment: "tax", icon: ReceiptText, implemented: false },
