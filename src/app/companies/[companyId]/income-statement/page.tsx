@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { AccountType } from "@prisma/client";
 import { ArrowUpRight, FileBarChart, Search } from "lucide-react";
 import { requireActiveOrganization } from "@/lib/session";
 import { requireOwnedCompany } from "@/lib/company-guard";
@@ -204,7 +205,7 @@ export default async function IncomeStatementPage({
   );
 }
 
-type AccountOption = { id: string; code: string; name: string; type: "REVENUE" | "EXPENSE" };
+type AccountOption = { id: string; code: string; name: string; type: AccountType };
 type FiscalYearOption = { id: string; name: string; startDate: Date; endDate: Date };
 type PeriodOption = { id: string; fiscalYearId: string; name: string; startDate: Date; endDate: Date };
 
