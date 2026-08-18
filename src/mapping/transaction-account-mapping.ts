@@ -90,7 +90,11 @@ export async function mapTransactionToAccounts(organizationId: string, companyId
     const debitAccount = side === "DEBIT" ? primary : await findCounterpartAccount(company.id, organizationId, candidate, "DEBIT");
     const creditAccount = side === "CREDIT" ? primary : await findCounterpartAccount(company.id, organizationId, candidate, "CREDIT");
 
-    const alternativesRaw = Array.isArray(aiSuggestion.alternatives) ? aiSuggestion.alternatives : [];
+    type RawAlternative = { accountId: string; code: string; name: string; confidence: NormalizationConfidence };
+    const isRawAlternative = (a: unknown): a is RawAlternative =>
+      typeof a === "object" && a !== null && typeof (a as Record<string, unknown>).accountId === "string";
+
+    const alternativesRaw: RawAlternative[] = Array.isArray(aiSuggestion.alternatives) ? aiSuggestion.alternatives.filter(isRawAlternative) : [];
     const alternativeIds = alternativesRaw.map((a) => a.accountId);
     const alternativeAccounts = await validateAccountIds(organizationId, company.id, alternativeIds);
     const alternatives: Alternative[] = alternativesRaw.filter((a) => alternativeAccounts.has(a.accountId)).map((a) => ({ accountId: a.accountId, code: a.code, name: a.name, confidence: a.confidence, side: side ?? "DEBIT" }));
