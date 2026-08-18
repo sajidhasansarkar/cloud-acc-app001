@@ -229,6 +229,7 @@ enum AIReviewAuditAction {
   JOURNAL_SENT_FOR_REVIEW
   JOURNAL_MARKED_READY
   JOURNAL_RETURNED_TO_DRAFT
+  JOURNAL_POSTED
   // Phase 4B-6: a DRAFT Journal Entry was created from this candidate's
   // accepted AI suggestion. Recorded here (rather than a new audit table)
   // so the full Source Transaction -> AI Suggestion -> Human Approval ->
@@ -258,11 +259,12 @@ model User {
   // a journal entry must not disappear (or silently orphan) if the user
   // who created it is later removed; application code decides how
   // createdById is displayed (see JournalEntry.createdBy comment below).
-  journalEntriesCreated JournalEntry[]
+  journalEntriesCreated JournalEntry[] @relation("JournalEntryCreatedBy")
   documentsUploaded Document[]
   normalizedCandidatesCorrected NormalizedTransactionCandidate[] @relation("CandidateCorrections")
   aiReviewRecords AIReviewRecord[]
   aiReviewAudits AIReviewAudit[]
+  journalEntriesPosted JournalEntry[] @relation("JournalEntryPostedBy")
   aiReviewedRecords AIReviewRecord[] @relation("AIReviewedBy")
 
   @@map("users")
@@ -278,6 +280,7 @@ model Organization {
 
   memberships Membership[]
   companies   Company[]
+  generalLedgerEntries GeneralLedgerEntry[]
   documents   Document[]
   normalizedCandidates NormalizedTransactionCandidate[]
 
@@ -355,6 +358,7 @@ model Company {
   taxCodes          TaxCode[]
   accountMappings   AccountMapping[]
   journalEntries    JournalEntry[]
+  generalLedgerEntries GeneralLedgerEntry[]
   documents         Document[]
   normalizedCandidates NormalizedTransactionCandidate[]
 
@@ -428,6 +432,7 @@ model Account {
   // is never deleted (isActive above), so this relation doesn't need an
   // onDelete action either — nothing here cascades.
   journalEntryLines JournalEntryLine[]
+  generalLedgerEntries GeneralLedgerEntry[]
   aiSuggestedReviews AIReviewSuggestion[] @relation("AISuggestedAccount")
   aiHumanReviewRecords AIReviewRecord[] @relation("AIHumanAccount")
 
@@ -466,6 +471,7 @@ model FiscalYear {
   // shouldn't be deletable out from under them (application code, not this
   // phase, decides how that's enforced).
   journalEntries JournalEntry[]
+  generalLedgerEntries GeneralLedgerEntry[]
 
   // A company shouldn't have two fiscal years with the same name (e.g. two
   // "FY2026"s). Overlap-by-date-range is a separate, non-unique-constraint
@@ -501,6 +507,7 @@ model AccountingPeriod {
   // Journal entries (Phase 4A-1) posted within this period. No onDelete
   // cascade — same rationale as FiscalYear.journalEntries above.
   journalEntries JournalEntry[]
+  generalLedgerEntries GeneralLedgerEntry[]
 
   // Period numbers must be unique within a fiscal year (e.g. only one
   // "Period 1" per fiscal year).
@@ -785,6 +792,7 @@ model NormalizedTransactionCandidate {
   aiReview AIReviewRecord?
   aiReviewSuggestions AIReviewSuggestion[]
   aiReviewAudits AIReviewAudit[]
+  journalEntriesPosted JournalEntry[] @relation("JournalEntryPostedBy")
   // Phase 4B-6 traceability: Draft Journal Entries created from this
   // candidate's accepted AI suggestion (duplicate-protected — see
   // JournalEntry.transactionCandidateId).
@@ -958,6 +966,8 @@ model JournalEntry {
   // per spec section 12 ("do not expose sensitive user information
   // unnecessarily").
   createdById String
+  postedAt DateTime?
+  postedByUserId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -965,12 +975,14 @@ model JournalEntry {
   company          Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
   fiscalYear       FiscalYear       @relation(fields: [fiscalYearId], references: [id])
   accountingPeriod AccountingPeriod @relation(fields: [accountingPeriodId], references: [id])
-  createdBy        User             @relation(fields: [createdById], references: [id])
+  createdBy        User             @relation("JournalEntryCreatedBy", fields: [createdById], references: [id])
+  postedByUser     User?            @relation("JournalEntryPostedBy", fields: [postedByUserId], references: [id])
 
   sourceDocument       Document?                       @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
   transactionCandidate NormalizedTransactionCandidate? @relation(fields: [transactionCandidateId], references: [id], onDelete: SetNull)
   aiSuggestion         AIReviewSuggestion?              @relation(fields: [aiSuggestionId], references: [id], onDelete: SetNull)
   aiReviewAudits       AIReviewAudit[]
+  generalLedgerEntries GeneralLedgerEntry[]
 
   lines JournalEntryLine[]
 
@@ -1023,6 +1035,7 @@ model JournalEntryLine {
   updatedAt DateTime @updatedAt
 
   journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  generalLedgerEntries GeneralLedgerEntry[]
   // Deliberately no onDelete override — an Account is never hard-deleted
   // (Account.isActive), so this never needs to cascade or null out; the
   // account referenced by a line must always belong to the same company
@@ -1034,4 +1047,41 @@ model JournalEntryLine {
   @@index([journalEntryId])
   @@index([accountId])
   @@map("journal_entry_lines")
+}
+
+// General Ledger foundation (Phase 4B-11). One immutable source-derived
+// ledger row exists for each JournalEntryLine of a POSTED JournalEntry.
+// This is deliberately a projection of posted journal data, not a second
+// source-document system.
+model GeneralLedgerEntry {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  companyId          String
+  journalEntryId     String
+  journalEntryLineId String
+  accountId          String
+  fiscalYearId       String
+  accountingPeriodId String
+  entryDate          DateTime
+  description        String?
+  reference          String?
+  debit              Decimal  @db.Decimal(20, 4)
+  credit             Decimal  @db.Decimal(20, 4)
+  createdAt          DateTime @default(now())
+
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company          Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  journalEntry     JournalEntry     @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  journalEntryLine JournalEntryLine @relation(fields: [journalEntryLineId], references: [id], onDelete: Restrict)
+  account          Account          @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  fiscalYear       FiscalYear       @relation(fields: [fiscalYearId], references: [id], onDelete: Restrict)
+  accountingPeriod AccountingPeriod @relation(fields: [accountingPeriodId], references: [id], onDelete: Restrict)
+
+  @@unique([journalEntryId, journalEntryLineId])
+  @@index([organizationId, companyId, entryDate])
+  @@index([companyId, accountId, entryDate])
+  @@index([companyId, fiscalYearId, accountingPeriodId, entryDate])
+  @@index([journalEntryId])
+  @@index([journalEntryLineId])
+  @@map("general_ledger_entries")
 }

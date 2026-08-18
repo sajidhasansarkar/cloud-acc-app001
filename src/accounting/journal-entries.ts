@@ -1295,7 +1295,7 @@ const ALLOWED_STATUS_TRANSITIONS: Record<JournalEntry["status"], JournalEntry["s
   DRAFT: ["IN_REVIEW", "VOID"],
   IN_REVIEW: ["DRAFT", "READY_FOR_POSTING"],
   READY_FOR_POSTING: ["DRAFT"],
-  POSTED: ["VOID"],
+  POSTED: [],
   VOID: [],
 };
 
@@ -1450,25 +1450,234 @@ export async function returnJournalEntryToDraft(
 export async function postJournalEntry(
   organizationId: string,
   companyId: string,
-  journalEntryId: string
+  journalEntryId: string,
+  userId: string
 ): Promise<JournalEntryResult> {
-  const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
-  if (!existing) {
-    return { ok: false, error: "Journal entry not found." };
+  const current = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
+  if (!current) return { ok: false, error: "Journal entry not found." };
+  if (current.status === "POSTED") {
+    return { ok: false, error: "Journal Entry has already been posted." };
+  }
+  if (current.status !== "READY_FOR_POSTING") {
+    return { ok: false, error: "Only READY_FOR_POSTING entries can be posted." };
   }
 
-  if (existing.status !== "READY_FOR_POSTING") {
-    return { ok: false, error: `Only READY_FOR_POSTING entries can become POSTED.` };
+  // Reuse the existing server-side posting/readiness validators for the
+  // immediate preflight check. The transaction below repeats the checks
+  // against its own snapshot so the browser can never race a validation
+  // result into a partial post.
+  const readyCheck = await validateReadyForPostingJournalEntry(organizationId, companyId, journalEntryId);
+  if (!readyCheck.valid) {
+    return { ok: false, error: readyCheck.errors.join(" ") };
+  }
+  const postingValidation = await validateJournalEntryForPosting(organizationId, journalEntryId);
+  if (!postingValidation.ok) {
+    return postingValidation;
   }
 
-  const validation = await validateJournalEntryForPosting(organizationId, journalEntryId);
-  if (!validation.ok) {
-    return validation;
-  }
+  try {
+    const entry = await prisma.$transaction(async (tx) => {
+      // Re-check the complete authenticated ownership chain inside the
+      // posting transaction. Browser-supplied ids are never trusted.
+      const membership = await tx.membership.findFirst({
+        where: { userId, organizationId, status: "ACTIVE" },
+        select: { id: true },
+      });
+      if (!membership) throw new Error("POSTING_ORGANIZATION_ACCESS");
 
-  return setJournalEntryStatus(organizationId, companyId, journalEntryId, "POSTED");
+      const company = await tx.company.findFirst({
+        where: { id: companyId, organizationId },
+        select: { id: true },
+      });
+      if (!company) throw new Error("POSTING_COMPANY_ACCESS");
+
+      const current = await tx.journalEntry.findFirst({
+        where: {
+          id: journalEntryId,
+          companyId: company.id,
+          company: { organizationId },
+        },
+        include: {
+          lines: { include: { account: true }, orderBy: { lineNumber: "asc" } },
+          fiscalYear: true,
+          accountingPeriod: true,
+        },
+      });
+
+      if (!current) throw new Error("POSTING_ENTRY_NOT_FOUND");
+      if (current.status === "POSTED") throw new Error("POSTING_ALREADY_POSTED");
+      if (current.status !== "READY_FOR_POSTING") throw new Error("POSTING_NOT_READY");
+
+      const errors: string[] = [];
+
+      // Re-check Fiscal Year -> Company and Period -> Fiscal Year -> Company.
+      if (current.fiscalYear.companyId !== company.id) {
+        errors.push("Fiscal year is not valid for this company.");
+      }
+      if (
+        current.accountingPeriod.companyId !== company.id ||
+        current.accountingPeriod.fiscalYearId !== current.fiscalYear.id
+      ) {
+        errors.push("Accounting period is not valid for this fiscal year and company.");
+      }
+      if (
+        current.entryDate < current.accountingPeriod.startDate ||
+        current.entryDate > current.accountingPeriod.endDate
+      ) {
+        errors.push("The entry date does not fall within the selected accounting period.");
+      }
+      if (current.fiscalYear.status !== "OPEN") {
+        errors.push(`Fiscal year is ${current.fiscalYear.status.toLowerCase()}.`);
+      }
+      if (current.accountingPeriod.status !== "OPEN") {
+        errors.push(`Accounting period is ${current.accountingPeriod.status.toLowerCase()}.`);
+      }
+
+      // Re-check every line -> Account -> Company and all posting invariants.
+      let totalDebit = new Prisma.Decimal(0);
+      let totalCredit = new Prisma.Decimal(0);
+      let validLineCount = 0;
+
+      for (const line of current.lines) {
+        if (line.account.companyId !== company.id) {
+          errors.push("One or more journal lines reference an account outside this company.");
+          continue;
+        }
+        if (!line.account.isActive) {
+          errors.push("One or more journal lines reference an inactive account.");
+        }
+
+        const debit = new Prisma.Decimal(line.debit);
+        const credit = new Prisma.Decimal(line.credit);
+        if (debit.isNegative() || credit.isNegative()) {
+          errors.push("Journal line amounts cannot be negative.");
+        }
+        const debitSet = debit.gt(0);
+        const creditSet = credit.gt(0);
+        if (debitSet && creditSet) {
+          errors.push("Debit and Credit cannot both contain values on a journal line.");
+        }
+        if (debitSet !== creditSet) validLineCount += 1;
+
+        totalDebit = totalDebit.plus(debit);
+        totalCredit = totalCredit.plus(credit);
+      }
+
+      if (validLineCount < 2) errors.push("At least two valid journal lines are required.");
+      const difference = totalDebit.minus(totalCredit);
+      if (!difference.isZero()) errors.push("Journal entry is not balanced.");
+
+      if (errors.length > 0) {
+        throw new Error(`POSTING_VALIDATION:${[...new Set(errors)].join(" ")}`);
+      }
+
+      // A READY_FOR_POSTING entry must never already have ledger projection
+      // rows. Treat that state as an integrity failure rather than silently
+      // creating duplicates. The unique database constraint is the final
+      // backstop for concurrent/retried requests.
+      const existingLedgerCount = await tx.generalLedgerEntry.count({
+        where: { journalEntryId: current.id },
+      });
+      if (existingLedgerCount > 0) {
+        throw new Error("POSTING_LEDGER_ALREADY_EXISTS");
+      }
+
+      // The status predicate makes posting idempotent under duplicate requests:
+      // exactly one transaction can transition READY_FOR_POSTING -> POSTED.
+      const updatedCount = await tx.journalEntry.updateMany({
+        where: {
+          id: current.id,
+          companyId: company.id,
+          status: "READY_FOR_POSTING",
+          accountingPeriod: { status: "OPEN", fiscalYearId: current.fiscalYear.id, companyId: company.id },
+          fiscalYear: { status: "OPEN", companyId: company.id },
+        },
+        data: {
+          status: "POSTED",
+          postedAt: new Date(),
+          postedByUserId: userId,
+        },
+      });
+
+      if (updatedCount.count !== 1) {
+        const latest = await tx.journalEntry.findUnique({
+          where: { id: current.id },
+          select: { status: true },
+        });
+        if (latest?.status === "POSTED") throw new Error("POSTING_ALREADY_POSTED");
+        throw new Error("POSTING_CONCURRENT_CHANGE");
+      }
+
+      await tx.generalLedgerEntry.createMany({
+        data: current.lines.map((line) => ({
+          organizationId,
+          companyId: company.id,
+          journalEntryId: current.id,
+          journalEntryLineId: line.id,
+          accountId: line.accountId,
+          fiscalYearId: current.fiscalYearId,
+          accountingPeriodId: current.accountingPeriodId,
+          entryDate: current.entryDate,
+          description: line.description ?? current.description,
+          reference: line.reference ?? current.reference,
+          debit: line.debit,
+          credit: line.credit,
+        })),
+      });
+
+      await tx.aIReviewAudit.create({
+        data: {
+          candidateId: current.transactionCandidateId,
+          suggestionId: current.aiSuggestionId,
+          action: "JOURNAL_POSTED",
+          userId,
+          journalEntryId: current.id,
+          relevantCorrection: "Journal Entry status transitioned from READY_FOR_POSTING to POSTED.",
+        },
+      });
+
+      return tx.journalEntry.findUniqueOrThrow({
+        where: { id: current.id },
+        include: { lines: { orderBy: { lineNumber: "asc" } } },
+      });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    });
+
+    return { ok: true, entry };
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      if (error.message === "POSTING_ALREADY_POSTED") {
+        return { ok: false, error: "Journal Entry has already been posted." };
+      }
+      if (error.message === "POSTING_ENTRY_NOT_FOUND" || error.message === "POSTING_COMPANY_ACCESS") {
+        return { ok: false, error: "Journal entry not found." };
+      }
+      if (error.message === "POSTING_ORGANIZATION_ACCESS") {
+        return { ok: false, error: "You no longer have access to this organization." };
+      }
+      if (error.message === "POSTING_NOT_READY") {
+        return { ok: false, error: "Only READY_FOR_POSTING entries can be posted." };
+      }
+      if (error.message === "POSTING_LEDGER_ALREADY_EXISTS") {
+        return { ok: false, error: "General Ledger records already exist for this Journal Entry. Posting was not completed." };
+      }
+      if (error.message.startsWith("POSTING_VALIDATION:")) {
+        return { ok: false, error: error.message.slice("POSTING_VALIDATION:".length) };
+      }
+      // A concurrent serializable transaction may abort after the first
+      // request commits. Resolve the final state before returning an error.
+      const latest = await prisma.journalEntry.findFirst({
+        where: { id: journalEntryId, companyId, company: { organizationId } },
+        select: { status: true },
+      });
+      if (latest?.status === "POSTED") {
+        return { ok: false, error: "Journal Entry has already been posted." };
+      }
+    }
+    return { ok: false, error: "Journal Entry could not be posted. No changes were saved." };
+  }
 }
-
 export const voidJournalEntry = (organizationId: string, companyId: string, journalEntryId: string) =>
   setJournalEntryStatus(organizationId, companyId, journalEntryId, "VOID");
 
@@ -1487,6 +1696,9 @@ export async function deleteJournalEntry(
   const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
   if (!existing) {
     return { ok: false, error: "Journal entry not found." };
+  }
+  if (existing.status === "POSTED") {
+    return { ok: false, error: "Posted journal entries cannot be deleted." };
   }
   if (existing.status !== "DRAFT") {
     return { ok: false, error: "Only DRAFT entries can be deleted. Void this entry instead." };

@@ -302,17 +302,18 @@ export async function postJournalEntryAction(
   companyId: string,
   journalEntryId: string
 ): Promise<JournalEntryResult> {
-  const { role, organization } = await requireActiveOrganization();
+  const { role, organization, user } = await requireActiveOrganization();
 
   if (!canManageJournalEntries(role)) {
     return { ok: false, error: "You don't have permission to manage journal entries." };
   }
 
-  const result = await postJournalEntry(organization.id, companyId, journalEntryId);
+  const result = await postJournalEntry(organization.id, companyId, journalEntryId, user.id);
 
   if (result.ok) {
     revalidatePath(`/dashboard/companies/${companyId}`);
     revalidatePath(`/companies/${companyId}/journal-entries`);
+    revalidatePath(`/companies/${companyId}/journal-entries/${journalEntryId}`);
   }
 
   return result;

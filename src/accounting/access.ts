@@ -142,6 +142,7 @@ export async function getOwnedJournalEntryById(
       fiscalYear: true,
       accountingPeriod: true,
       createdBy: { select: { id: true, name: true } },
+      postedByUser: { select: { id: true, name: true } },
     },
   });
 }
@@ -190,6 +191,7 @@ export async function getOwnedJournalEntry(
       fiscalYear: true,
       accountingPeriod: true,
       createdBy: { select: { id: true, name: true } },
+      postedByUser: { select: { id: true, name: true } },
       // Phase 4B-6 traceability (spec section 11): only populated for
       // entries created from an accepted AI suggestion — null for manual
       // entries. Kept minimal (no sensitive user data, no raw file

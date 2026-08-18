@@ -13,6 +13,7 @@ import { JournalEntryBalanceSummary } from "@/components/journal-entries/journal
 import { JournalEntryDeleteAction } from "@/components/journal-entries/journal-entry-delete-action";
 import { JournalEntryLinesManager } from "@/components/journal-entries/journal-entry-lines-manager";
 import { JournalEntryReviewActions } from "@/components/journal-entries/journal-entry-review-actions";
+import { JournalEntryPostAction } from "@/components/journal-entries/journal-entry-post-action";
 import { JournalEntryValidationSummary } from "@/components/journal-entries/journal-entry-validation-summary";
 import { JOURNAL_ENTRY_SOURCE_TYPE_LABELS } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
@@ -105,6 +106,18 @@ export default async function JournalEntryDetailPage({
                 status={entry.status}
               />
             ) : null}
+            {canManage && entry.status === "READY_FOR_POSTING" ? (
+              <JournalEntryPostAction
+                companyId={company.id}
+                journalEntryId={entry.id}
+                entryNumber={entry.entryNumber}
+                entryDate={formatDate(entry.entryDate)}
+                totalDebit={balance.totalDebit.toFixed(4)}
+                totalCredit={balance.totalCredit.toFixed(4)}
+                difference={balance.difference.toFixed(4)}
+                lineCount={entry.lines.length}
+              />
+            ) : null}
             {canManage && entry.status === "DRAFT" ? (
               <JournalEntryDeleteAction
                 companyId={company.id}
@@ -136,6 +149,8 @@ export default async function JournalEntryDetailPage({
           <Field label="Label" value={entry.label} />
           <Field label="Created By" value={entry.createdBy?.name} />
           <Field label="Created Date" value={formatDate(entry.createdAt)} />
+          {entry.status === "POSTED" ? <Field label="Posted At" value={entry.postedAt ? formatDate(entry.postedAt) : "—"} /> : null}
+          {entry.status === "POSTED" ? <Field label="Posted By" value={entry.postedByUser?.name} /> : null}
           <Field label="Updated Date" value={formatDate(entry.updatedAt)} />
         </CardContent>
       </Card>
