@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronDown, FileBarChart, Scale, WalletCards } from "lucide-react";
-import { useState } from "react";
+import { BookOpenCheck, ChevronDown, FileBarChart, Scale, WalletCards } from "lucide-react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 const REPORTS = [
+  { label: "General Ledger", segment: "general-ledger", icon: BookOpenCheck },
   { label: "Trial Balance", segment: "trial-balance", icon: Scale },
   { label: "Balance Sheet", segment: "balance-sheet", icon: FileBarChart },
   { label: "Income Statement", segment: "income-statement", icon: FileBarChart },
@@ -15,9 +16,23 @@ const REPORTS = [
 
 export function ReportsDropdown({ companyId, className }: { companyId: string; className?: string }) {
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);
   const basePath = `/companies/${companyId}`;
   const activeReport = REPORTS.find((report) => pathname.startsWith(`${basePath}/${report.segment}`));
+  const inReportsSection = Boolean(activeReport) || pathname.startsWith(`${basePath}/reports`);
+
+  // The dropdown lives in a layout that stays mounted across navigation
+  // within the company workspace, so a plain "closed by default" state
+  // would otherwise collapse the panel the moment a report link is
+  // clicked, even though the sidebar itself never unmounts. `manualOpen`
+  // only overrides the section-derived default until the user leaves the
+  // Reports section, at which point it resets so returning later re-opens
+  // (or stays closed) based on the route again.
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const open = manualOpen ?? inReportsSection;
+
+  useEffect(() => {
+    if (!inReportsSection) setManualOpen(null);
+  }, [inReportsSection]);
 
   return (
     <div className={cn("relative", className)}>
@@ -25,10 +40,10 @@ export function ReportsDropdown({ companyId, className }: { companyId: string; c
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setManualOpen(!open)}
         className={cn(
           "flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-sm transition-colors",
-          activeReport || pathname.startsWith(`${basePath}/reports`)
+          inReportsSection
             ? "bg-ink-800 text-white"
             : "text-ink-300 hover:bg-ink-900 hover:text-white"
         )}
@@ -47,7 +62,6 @@ export function ReportsDropdown({ companyId, className }: { companyId: string; c
                 key={report.segment}
                 href={href}
                 role="menuitem"
-                onClick={() => setOpen(false)}
                 className={cn(
                   "flex items-center gap-2.5 px-3 py-2 text-sm transition-colors",
                   active ? "bg-ink-800 text-white" : "text-ink-300 hover:bg-ink-800 hover:text-white"
