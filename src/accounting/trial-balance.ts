@@ -82,8 +82,8 @@ async function validateScopedFilters(
   }
 
   const accountIds = await resolveScopedFilterAccountIds(organizationId, companyId, filters);
-  if (filters.accountId && accountIds.length === 0) return { valid: false, accountIds };
-  if (filters.accountSearch && accountIds.length === 0) return { valid: true, accountIds };
+  if (filters.accountId && accountIds?.length === 0) return { valid: false, accountIds };
+  if (filters.accountSearch && accountIds?.length === 0) return { valid: true, accountIds };
 
   return { valid: true, accountIds };
 }
