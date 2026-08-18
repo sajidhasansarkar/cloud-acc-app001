@@ -82,3 +82,9 @@ export function isAdmin(role: Role) {
 export function canReviewAI(role: Role) {
   return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT" || role === "REVIEWER";
 }
+
+// Journal Entry review is a human approval capability. It deliberately
+// includes REVIEWER while edit/create capabilities remain unchanged.
+export function canReviewJournalEntries(role: Role) {
+  return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT" || role === "REVIEWER";
+}

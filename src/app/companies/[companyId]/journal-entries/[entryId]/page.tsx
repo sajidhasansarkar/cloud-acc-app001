@@ -3,8 +3,8 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, Pencil, ListChecks } from "lucide-react";
 import { requireActiveOrganization } from "@/lib/session";
 import { requireOwnedCompany } from "@/lib/company-guard";
-import { getJournalEntry, validateJournalEntryBalance } from "@/accounting/journal-entries";
-import { canManageJournalEntries } from "@/lib/rbac";
+import { getJournalEntry, validateJournalEntryBalance, validateJournalEntryForReview } from "@/accounting/journal-entries";
+import { canManageJournalEntries, canReviewJournalEntries } from "@/lib/rbac";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -12,6 +12,8 @@ import { JournalEntryStatusBadge } from "@/components/journal-entries/journal-en
 import { JournalEntryBalanceSummary } from "@/components/journal-entries/journal-entry-balance-summary";
 import { JournalEntryDeleteAction } from "@/components/journal-entries/journal-entry-delete-action";
 import { JournalEntryLinesManager } from "@/components/journal-entries/journal-entry-lines-manager";
+import { JournalEntryReviewActions } from "@/components/journal-entries/journal-entry-review-actions";
+import { JournalEntryValidationSummary } from "@/components/journal-entries/journal-entry-validation-summary";
 import { JOURNAL_ENTRY_SOURCE_TYPE_LABELS } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
 import type { JournalEntrySourceType } from "@prisma/client";
@@ -46,6 +48,7 @@ export default async function JournalEntryDetailPage({
   }
 
   const canManage = canManageJournalEntries(role);
+  const canReview = canReviewJournalEntries(role);
   // The balance summary is calculated from the persisted journal lines with
   // Prisma.Decimal. No display value is derived from JavaScript Number.
   const balance = await validateJournalEntryBalance(entry.id);
@@ -63,6 +66,8 @@ export default async function JournalEntryDetailPage({
         : balance.difference.lt(0)
           ? "Credit exceeds Debit"
           : "Journal entry is not balanced.";
+  const reviewValidation = await validateJournalEntryForReview(organization.id, entry.id);
+  const reviewErrors = reviewValidation.valid ? [] : reviewValidation.errors;
 
   return (
     <div className="space-y-6">
@@ -82,23 +87,29 @@ export default async function JournalEntryDetailPage({
           <p className="text-sm text-ink-500">{company.displayName}</p>
         </div>
 
-        {canManage ? (
-          <div className="flex items-center gap-2">
-            <Link
-              href={`${basePath}/${entry.id}/edit`}
-              aria-disabled={entry.status !== "DRAFT"}
-              tabIndex={entry.status === "DRAFT" ? 0 : -1}
-              className={buttonVariants({ variant: "outline" }) + (entry.status !== "DRAFT" ? " pointer-events-none opacity-50" : "")}
-            >
-              <Pencil className="h-4 w-4" />
-              Edit
-            </Link>
-            <JournalEntryDeleteAction
-              companyId={company.id}
-              journalEntryId={entry.id}
-              entryNumber={entry.entryNumber}
-              status={entry.status}
-            />
+        {(canManage || canReview) ? (
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {canManage && entry.status === "DRAFT" ? (
+              <Link href={`${basePath}/${entry.id}/edit`} className={buttonVariants({ variant: "outline" })}>
+                <Pencil className="h-4 w-4" />
+                Edit
+              </Link>
+            ) : null}
+            {canReview && (entry.status === "DRAFT" || entry.status === "IN_REVIEW" || entry.status === "READY_FOR_POSTING") ? (
+              <JournalEntryReviewActions
+                companyId={company.id}
+                journalEntryId={entry.id}
+                status={entry.status}
+              />
+            ) : null}
+            {canManage && entry.status === "DRAFT" ? (
+              <JournalEntryDeleteAction
+                companyId={company.id}
+                journalEntryId={entry.id}
+                entryNumber={entry.entryNumber}
+                status={entry.status}
+              />
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -109,6 +120,7 @@ export default async function JournalEntryDetailPage({
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field label="Entry Number" value={entry.entryNumber} />
+          <Field label="Company" value={company.displayName} />
           <Field label="Entry Date" value={formatDate(entry.entryDate)} />
           <Field label="Fiscal Year" value={entry.fiscalYear.name} />
           <Field label="Accounting Period" value={entry.accountingPeriod.name} />
@@ -125,7 +137,15 @@ export default async function JournalEntryDetailPage({
         </CardContent>
       </Card>
 
-      {entry.status === "POSTED" ? (
+      {entry.status === "IN_REVIEW" ? (
+        <div className="rounded-lg border border-pending/20 bg-pending/5 px-4 py-3 text-sm text-ink-800">
+          <strong>Accounting Review</strong> — this journal entry is awaiting human review. Editing is locked until it is returned to Draft.
+        </div>
+      ) : entry.status === "READY_FOR_POSTING" ? (
+        <div className="rounded-lg border border-positive/20 bg-positive/5 px-4 py-3 text-sm text-ink-800">
+          <strong>Ready for Posting</strong> — human review and accounting validation have passed. This entry is not posted.
+        </div>
+      ) : entry.status === "POSTED" ? (
         <div className="rounded-lg border border-ink-200 bg-surface-muted px-4 py-3 text-sm text-ink-700">
           Posted journal entries are locked.
         </div>
@@ -134,6 +154,16 @@ export default async function JournalEntryDetailPage({
           Void journal entries cannot be modified.
         </div>
       ) : null}
+
+      <JournalEntryValidationSummary
+        valid={reviewValidation.valid}
+        errors={reviewErrors}
+        totalDebit={reviewValidation.totalDebit.toFixed(4)}
+        totalCredit={reviewValidation.totalCredit.toFixed(4)}
+        difference={reviewValidation.difference.toFixed(4)}
+        balanced={reviewValidation.balanced}
+        status={entry.status}
+      />
 
       {entry.transactionCandidate || entry.sourceDocument || entry.aiSuggestion ? (
         <Card>
@@ -175,6 +205,27 @@ export default async function JournalEntryDetailPage({
                 <Field label="AI Explanation" value={entry.aiSuggestion.explanation} />
               </>
             ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {entry.aiReviewAudits.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Review Audit Trail</CardTitle>
+            <CardDescription>Review and status changes recorded in the existing audit system.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {entry.aiReviewAudits.map((audit) => (
+              <div key={audit.id} className="flex flex-col gap-1 rounded-md border border-ink-100 bg-surface-subtle px-3 py-2 text-sm sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="font-medium text-ink-900">{audit.action.replaceAll("_", " ")}</p>
+                  <p className="text-ink-600">{audit.relevantCorrection || "Review status changed."}</p>
+                  {audit.user ? <p className="text-xs text-ink-500">By {audit.user.name}</p> : null}
+                </div>
+                <p className="text-xs text-ink-500">{formatDate(audit.createdAt)}</p>
+              </div>
+            ))}
           </CardContent>
         </Card>
       ) : null}

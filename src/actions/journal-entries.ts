@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireActiveOrganization } from "@/lib/session";
-import { canManageJournalEntries } from "@/lib/rbac";
+import { canManageJournalEntries, canReviewJournalEntries } from "@/lib/rbac";
 import {
   createJournalEntrySchema,
   updateJournalEntryHeaderSchema,
@@ -19,6 +19,10 @@ import {
   updateJournalEntryHeader,
   updateJournalEntry,
   validateJournalEntryBalance,
+  validateJournalEntryForReview,
+  sendJournalEntryForReview,
+  markJournalEntryReadyForPosting,
+  returnJournalEntryToDraft,
   type JournalEntryResult,
   type ListJournalEntriesInput,
   type JournalEntryListResult,
@@ -243,6 +247,55 @@ export async function validateJournalEntryBalanceAction(companyId: string, journ
     totalCredit: balance.totalCredit.toFixed(4),
     difference: balance.difference.toFixed(4),
   };
+}
+
+export async function validateJournalEntryForReviewAction(companyId: string, journalEntryId: string) {
+  const { organization } = await requireActiveOrganization();
+  const entry = await getJournalEntry(organization.id, companyId, journalEntryId);
+  if (!entry) return { ok: false as const, error: "Journal entry not found." };
+  const result = await validateJournalEntryForReview(organization.id, journalEntryId);
+  return {
+    ok: true as const,
+    valid: result.valid,
+    errors: result.valid ? [] : result.errors,
+    totalDebit: result.totalDebit.toFixed(4),
+    totalCredit: result.totalCredit.toFixed(4),
+    difference: result.difference.toFixed(4),
+    balanced: result.balanced,
+  };
+}
+
+export async function sendJournalEntryForReviewAction(companyId: string, journalEntryId: string) {
+  const { role, user, organization } = await requireActiveOrganization();
+  if (!canReviewJournalEntries(role)) return { ok: false as const, error: "You don't have permission to review journal entries." };
+  const result = await sendJournalEntryForReview(organization.id, companyId, journalEntryId, user.id);
+  if (result.ok) {
+    revalidatePath(`/companies/${companyId}/journal-entries`);
+    revalidatePath(`/companies/${companyId}/journal-entries/${journalEntryId}`);
+  }
+  return result;
+}
+
+export async function markJournalEntryReadyForPostingAction(companyId: string, journalEntryId: string) {
+  const { role, user, organization } = await requireActiveOrganization();
+  if (!canReviewJournalEntries(role)) return { ok: false as const, error: "You don't have permission to approve journal entries." };
+  const result = await markJournalEntryReadyForPosting(organization.id, companyId, journalEntryId, user.id);
+  if (result.ok) {
+    revalidatePath(`/companies/${companyId}/journal-entries`);
+    revalidatePath(`/companies/${companyId}/journal-entries/${journalEntryId}`);
+  }
+  return result;
+}
+
+export async function returnJournalEntryToDraftAction(companyId: string, journalEntryId: string) {
+  const { role, user, organization } = await requireActiveOrganization();
+  if (!canReviewJournalEntries(role)) return { ok: false as const, error: "You don't have permission to return journal entries to Draft." };
+  const result = await returnJournalEntryToDraft(organization.id, companyId, journalEntryId, user.id);
+  if (result.ok) {
+    revalidatePath(`/companies/${companyId}/journal-entries`);
+    revalidatePath(`/companies/${companyId}/journal-entries/${journalEntryId}`);
+  }
+  return result;
 }
 
 export async function postJournalEntryAction(

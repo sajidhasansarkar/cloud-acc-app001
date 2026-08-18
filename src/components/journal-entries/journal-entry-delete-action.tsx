@@ -42,7 +42,7 @@ export function JournalEntryDeleteAction({
 
   if (!canDelete) {
     return (
-      <Button type="button" variant="outline" size="sm" disabled title={status === "POSTED" ? "Posted journal entries are locked." : "Void journal entries cannot be modified."}>
+      <Button type="button" variant="outline" size="sm" disabled title={status === "POSTED" ? "Posted journal entries are locked." : status === "VOID" ? "Void journal entries cannot be modified." : "Entries in review or ready for posting cannot be deleted."}>
         <Trash2 className="h-4 w-4" />
         Delete
       </Button>

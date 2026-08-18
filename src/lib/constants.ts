@@ -169,14 +169,14 @@ export const JOURNAL_ENTRY_SOURCE_TYPE_LABELS: Record<(typeof JOURNAL_ENTRY_SOUR
   OTHER: "Other",
 };
 
-// Mirrors the JournalEntryStatus enum. Phase 4A-2 only ever creates DRAFT
-// entries (no posting/void workflow yet — spec section 11), but the label
-// map covers all three values so the status badge renders correctly no
-// matter how a record ends up in that state.
-export const JOURNAL_ENTRY_STATUSES = ["DRAFT", "POSTED", "VOID"] as const;
+// Mirrors the JournalEntryStatus enum and drives the journal-entry status
+// filter and status badge without importing Prisma enums into client UI.
+export const JOURNAL_ENTRY_STATUSES = ["DRAFT", "IN_REVIEW", "READY_FOR_POSTING", "POSTED", "VOID"] as const;
 
 export const JOURNAL_ENTRY_STATUS_LABELS: Record<(typeof JOURNAL_ENTRY_STATUSES)[number], string> = {
   DRAFT: "Draft",
+  IN_REVIEW: "In Review",
+  READY_FOR_POSTING: "Ready for Posting",
   POSTED: "Posted",
   VOID: "Void",
 };

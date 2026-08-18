@@ -270,7 +270,8 @@ export async function getSourceAIDraftReconciliation(
 
   const requiredFieldsValid = Boolean(
     draft &&
-    draft.status === "DRAFT" &&
+    draft.status !== "POSTED" &&
+    draft.status !== "VOID" &&
     draft.entryDate &&
     draft.fiscalYearId &&
     draft.accountingPeriodId
@@ -301,7 +302,7 @@ export async function getSourceAIDraftReconciliation(
 
   const canMarkReady =
     Boolean(review) &&
-    review.decision !== "REJECTED" &&
+    review?.decision !== "REJECTED" &&
     sourceReviewed &&
     requiredFieldsValid &&
     accountValid &&

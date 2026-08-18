@@ -219,7 +219,7 @@ export type AccountMappingFieldErrors = Partial<Record<keyof CreateAccountMappin
 // Journal Entries (Phase 4A-1)
 // ------------------------------
 
-export const journalEntryStatusSchema = z.enum(["DRAFT", "POSTED", "VOID"]);
+export const journalEntryStatusSchema = z.enum(["DRAFT", "IN_REVIEW", "READY_FOR_POSTING", "POSTED", "VOID"]);
 export type JournalEntryStatusInput = z.infer<typeof journalEntryStatusSchema>;
 
 export const journalEntrySourceTypeSchema = z.enum(["MANUAL", "IMPORT", "AI", "BANK", "OTHER"]);

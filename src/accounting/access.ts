@@ -198,6 +198,19 @@ export async function getOwnedJournalEntry(
       sourceDocument: { select: { id: true, originalFileName: true } },
       transactionCandidate: { select: { id: true, sourceRowReference: true, sourceSheetName: true, sourceRowNumber: true } },
       aiSuggestion: { select: { id: true, provider: true, model: true, explanation: true, confidence: true } },
+      aiReviewAudits: {
+        orderBy: { createdAt: "desc" },
+        take: 20,
+        select: {
+          id: true,
+          action: true,
+          createdAt: true,
+          relevantCorrection: true,
+          user: { select: { id: true, name: true } },
+          previousHumanReviewStatus: true,
+          newHumanReviewStatus: true,
+        },
+      },
     },
   });
 }

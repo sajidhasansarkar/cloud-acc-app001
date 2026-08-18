@@ -6,6 +6,8 @@ import type { JournalEntryStatus } from "@prisma/client";
 // status badges elsewhere in the app: a small lookup from the enum value
 // to a Badge `variant`, plus the human-readable label from constants.ts.
 function statusBadgeVariant(status: JournalEntryStatus) {
+  if (status === "READY_FOR_POSTING") return "success" as const;
+  if (status === "IN_REVIEW") return "warning" as const;
   if (status === "POSTED") return "success" as const;
   if (status === "VOID") return "danger" as const;
   return "outline" as const; // DRAFT

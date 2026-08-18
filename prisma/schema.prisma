@@ -15,11 +15,9 @@
 // only the reusable rule structure (source → Account / TaxCode) — nothing
 // reads or applies these mappings to a real transaction yet, since
 // transactions / bank import don't exist yet.
-// Phase 4A-1: journal entry database foundation (backend only — no UI
-// yet). See the JournalEntry / JournalEntryLine models below. Only basic
-// DRAFT/POSTED/VOID status + balance/date validation exist — no automatic
-// posting, numbering, file upload, OCR, AI extraction, bank import,
-// general ledger, or financial reports yet. Those belong to later phases.
+// Phase 4A-1 + later review phases: journal entry foundation and the
+// human review lifecycle. JournalEntry status now includes DRAFT, IN_REVIEW,
+// READY_FOR_POSTING, POSTED and VOID. Review states do not post to any ledger.
 
 generator client {
   provider = "prisma-client-js"
@@ -144,17 +142,17 @@ enum MappingSourceType {
 
 // Journal Entry database foundation (Phase 4A-1). Lifecycle state of a
 // journal entry (spec section 2).
-//  - DRAFT: freely editable, not yet part of the books. Safe to hard-delete.
-//  - POSTED: finalized. Never hard-deleted — see the JournalEntry model
-//    comment and spec section 14. Reversed only by moving to VOID.
-//  - VOID: cancelled/reversed. Terminal — nothing transitions out of VOID.
-// Deliberately just these three today ("do not implement complex posting
-// logic yet" — spec section 2), but kept as its own enum (rather than
-// reusing PeriodStatus) since a journal entry's lifecycle is a different
-// concept from a period's open/closed/locked state, even though both will
-// eventually interact once real posting logic exists.
+//  - DRAFT: editable working entry.
+//  - IN_REVIEW: locked for human accounting review.
+//  - READY_FOR_POSTING: review passed; this is not POSTED.
+//  - POSTED: finalized.
+//  - VOID: cancelled/reversed and terminal.
+// Kept as the single JournalEntry lifecycle enum so review states are not
+// duplicated in a second status system.
 enum JournalEntryStatus {
   DRAFT
+  IN_REVIEW
+  READY_FOR_POSTING
   POSTED
   VOID
 }
@@ -228,6 +226,9 @@ enum AIReviewAuditAction {
   REJECTED
   EDITED
   FAILED
+  JOURNAL_SENT_FOR_REVIEW
+  JOURNAL_MARKED_READY
+  JOURNAL_RETURNED_TO_DRAFT
   // Phase 4B-6: a DRAFT Journal Entry was created from this candidate's
   // accepted AI suggestion. Recorded here (rather than a new audit table)
   // so the full Source Transaction -> AI Suggestion -> Human Approval ->
@@ -864,7 +865,7 @@ model AIReviewSuggestion {
 
 model AIReviewAudit {
   id             String              @id @default(cuid())
-  candidateId    String
+  candidateId    String?
   suggestionId   String?
   action         AIReviewAuditAction
   provider       String?
@@ -887,7 +888,7 @@ model AIReviewAudit {
   // without a separate audit system.
   journalEntryId String?
 
-  candidate  NormalizedTransactionCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  candidate  NormalizedTransactionCandidate? @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   suggestion AIReviewSuggestion? @relation(fields: [suggestionId], references: [id], onDelete: SetNull)
   reviewRecord AIReviewRecord? @relation(fields: [candidateId], references: [candidateId], map: "ai_review_audits_review_record_fkey")
   user       User? @relation(fields: [userId], references: [id], onDelete: SetNull)
