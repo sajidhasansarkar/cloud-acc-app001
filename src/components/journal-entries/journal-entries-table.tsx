@@ -11,9 +11,10 @@ import {
 import { JournalEntryStatusBadge } from "@/components/journal-entries/journal-entry-status-badge";
 import { JOURNAL_ENTRY_SOURCE_TYPE_LABELS } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
-import type { JournalEntry, JournalEntrySourceType } from "@prisma/client";
+import type { JournalEntrySourceType } from "@prisma/client";
+import type { JournalEntryListResult } from "@/accounting/journal-entries";
 
-type JournalEntryRow = JournalEntry & { createdBy: { id: string; name: string } | null };
+type JournalEntryRow = JournalEntryListResult["entries"][number];
 
 export function JournalEntriesTable({
   companyId,
