@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, Plus, FileQuestion, FileClock } from "lucide-react";
 import { requireActiveOrganization } from "@/lib/session";
 import { requireOwnedCompany } from "@/lib/company-guard";
 import { getOwnedCompany } from "@/accounting/access";
@@ -17,7 +17,7 @@ export default async function DraftJournalEntriesPage({ params }: { params: { co
   const { organization, role } = await requireActiveOrganization();
   const company = await requireOwnedCompany(params.companyId);
   const owned = await getOwnedCompany(organization.id, company.id);
-  if (!owned) return <EmptyState title="Company not found" />;
+  if (!owned) return <EmptyState icon={FileQuestion} title="Company not found" />;
   const drafts = await prisma.journalEntry.findMany({
     where: { companyId: company.id, status: "DRAFT" },
     include: { lines: true, sourceDocument: { select: { id: true, originalFileName: true } } },
@@ -35,7 +35,7 @@ export default async function DraftJournalEntriesPage({ params }: { params: { co
         {canManage ? <Link href={`/companies/${company.id}/journal-entries/new`} className={buttonVariants({ variant: "primary" })}><Plus className="h-4 w-4" />New Journal Entry</Link> : null}
       </div>
       <div className="overflow-hidden rounded-lg border border-ink-100 bg-white shadow-card">
-        {drafts.length === 0 ? <div className="p-5"><EmptyState title="No draft journal entries" description="Generate a draft from an approved transaction mapping or create one manually." /></div> : <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="border-b border-ink-100 bg-surface-subtle"><tr>{["Date","Description","Reference","Source Document","Lines","Debit Total","Credit Total","Status","Last Updated"].map((h) => <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-ink-500">{h}</th>)}</tr></thead><tbody>{drafts.map((draft) => { const debit = draft.lines.reduce((sum, line) => sum.plus(line.debit), new Prisma.Decimal(0)); const credit = draft.lines.reduce((sum, line) => sum.plus(line.credit), new Prisma.Decimal(0)); return <tr key={draft.id} className="border-b border-ink-100 last:border-0"><td className="px-4 py-3">{formatDate(draft.entryDate)}</td><td className="px-4 py-3"><Link className="font-medium text-ink-900 hover:text-ledger-600" href={`/companies/${company.id}/journal-entries/${draft.id}`}>{draft.description || draft.entryNumber}</Link></td><td className="px-4 py-3 text-ink-500">{draft.reference || "—"}</td><td className="px-4 py-3 text-ink-500">{draft.sourceDocument ? draft.sourceDocument.originalFileName : "—"}</td><td className="px-4 py-3">{draft.lines.length}</td><td className="px-4 py-3 font-mono">{debit.toFixed(4)}</td><td className="px-4 py-3 font-mono">{credit.toFixed(4)}</td><td className="px-4 py-3"><JournalEntryStatusBadge status={draft.status} /></td><td className="px-4 py-3 text-ink-500">{formatDate(draft.updatedAt)}</td></tr>})}</tbody></table></div>}
+        {drafts.length === 0 ? <div className="p-5"><EmptyState icon={FileClock} title="No draft journal entries" description="Generate a draft from an approved transaction mapping or create one manually." /></div> : <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="border-b border-ink-100 bg-surface-subtle"><tr>{["Date","Description","Reference","Source Document","Lines","Debit Total","Credit Total","Status","Last Updated"].map((h) => <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-ink-500">{h}</th>)}</tr></thead><tbody>{drafts.map((draft) => { const debit = draft.lines.reduce((sum, line) => sum.plus(line.debit), new Prisma.Decimal(0)); const credit = draft.lines.reduce((sum, line) => sum.plus(line.credit), new Prisma.Decimal(0)); return <tr key={draft.id} className="border-b border-ink-100 last:border-0"><td className="px-4 py-3">{formatDate(draft.entryDate)}</td><td className="px-4 py-3"><Link className="font-medium text-ink-900 hover:text-ledger-600" href={`/companies/${company.id}/journal-entries/${draft.id}`}>{draft.description || draft.entryNumber}</Link></td><td className="px-4 py-3 text-ink-500">{draft.reference || "—"}</td><td className="px-4 py-3 text-ink-500">{draft.sourceDocument ? draft.sourceDocument.originalFileName : "—"}</td><td className="px-4 py-3">{draft.lines.length}</td><td className="px-4 py-3 font-mono">{debit.toFixed(4)}</td><td className="px-4 py-3 font-mono">{credit.toFixed(4)}</td><td className="px-4 py-3"><JournalEntryStatusBadge status={draft.status} /></td><td className="px-4 py-3 text-ink-500">{formatDate(draft.updatedAt)}</td></tr>})}</tbody></table></div>}
       </div>
     </div>
   );
