@@ -16,7 +16,7 @@ export function JournalEntryValidationSummary({
   status: JournalEntryStatus;
   findings?: JournalValidationFinding[];
 }) {
-  const displayFindings = findings.length
+  const displayFindings: JournalValidationFinding[] = findings.length
     ? findings
     : errors.map((message) => ({ code: message, severity: "ERROR" as const, message }));
 
