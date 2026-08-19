@@ -1590,7 +1590,7 @@ async function journalAudit(
   userId: string,
   action: string,
   journalEntryId: string,
-  details: Prisma.InputJsonValue,
+  details: Prisma.InputJsonObject,
   documentId?: string | null
 ) {
   await recordJournalAudit(organizationId, companyId, userId, action, {
