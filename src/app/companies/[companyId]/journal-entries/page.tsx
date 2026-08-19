@@ -96,7 +96,8 @@ export default async function CompanyJournalEntriesPage({
       ? (await listAccountingPeriods(organization.id, company.id, selectedFiscalYearForOptions.id)) ?? []
       : [];
     labels = labelRows ?? [];
-  } catch {
+  } catch (error) {
+    console.error("[journal-entries] failed to load filters:", error);
     return (
       <div className="space-y-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -153,7 +154,8 @@ export default async function CompanyJournalEntriesPage({
       page,
       pageSize: PAGE_SIZE,
     });
-  } catch {
+  } catch (error) {
+    console.error("[journal-entries] failed to load entries:", error);
     return (
       <div className="space-y-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

@@ -58,7 +58,8 @@ export default async function ReadyForPostingPage({
     accountingPeriods = selectedYear
       ? (await listAccountingPeriods(organization.id, company.id, selectedYear.id)) ?? []
       : [];
-  } catch {
+  } catch (error) {
+    console.error("[ready-for-posting] failed to load fiscal years/periods:", error);
     return <JournalEntriesError />;
   }
 
@@ -86,7 +87,8 @@ export default async function ReadyForPostingPage({
       page,
       pageSize: PAGE_SIZE,
     });
-  } catch {
+  } catch (error) {
+    console.error("[ready-for-posting] failed to load queue:", error);
     return <JournalEntriesError />;
   }
 
