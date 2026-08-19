@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { AlertTriangle, ArrowLeft, Pencil, ListChecks } from "lucide-react";
 import { requireActiveOrganization } from "@/lib/session";
 import { requireOwnedCompany } from "@/lib/company-guard";
+import { prisma } from "@/lib/prisma";
 import { getJournalEntry, validateJournalEntryBalance, validateJournalEntryForReview, validateReadyForPostingJournalEntry, validateDraftJournalEntry } from "@/accounting/journal-entries";
 import { canManageJournalEntries, canReviewJournalEntries } from "@/lib/rbac";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -70,9 +71,18 @@ export default async function JournalEntryDetailPage({
   const reviewValidation = await validateJournalEntryForReview(organization.id, entry.id);
   const draftValidation = await validateDraftJournalEntry(organization.id, entry.id);
   const reviewErrors = reviewValidation.valid ? [] : reviewValidation.errors;
-  const readyCheck = entry.status === "READY_FOR_POSTING"
+  const readyCheck = (entry.status === "READY_TO_POST" || entry.status === "READY_FOR_POSTING")
     ? await validateReadyForPostingJournalEntry(organization.id, company.id, entry.id)
     : null;
+  const approvalHistory = await prisma.documentAuditEvent.findMany({
+    where: { organizationId: organization.id, companyId: company.id, details: { path: ["journalEntryId"], equals: entry.id } },
+    orderBy: { createdAt: "asc" },
+    take: 100,
+    select: {
+      id: true, action: true, createdAt: true, details: true,
+      user: { select: { id: true, name: true } },
+    },
+  });
 
   return (
     <div className="space-y-6">
@@ -103,11 +113,16 @@ export default async function JournalEntryDetailPage({
             {canManage && entry.status === "DRAFT" && entry.transactionCandidate ? (
               <DraftJournalRegenerateAction journalEntryId={entry.id} modified={entry.version > 1} />
             ) : null}
-            {canReview && (entry.status === "DRAFT" || entry.status === "IN_REVIEW" || entry.status === "READY_FOR_POSTING") ? (
+            {canReview && (entry.status === "DRAFT" || entry.status === "IN_REVIEW" || entry.status === "NEEDS_REVIEW" || entry.status === "NOT_BALANCED" || entry.status === "BALANCED" || entry.status === "APPROVED" || entry.status === "READY_TO_POST" || entry.status === "REJECTED" || entry.status === "READY_FOR_POSTING") ? (
               <JournalEntryReviewActions
                 companyId={company.id}
                 journalEntryId={entry.id}
                 status={entry.status}
+                version={entry.version}
+                totalDebit={reviewValidation.totalDebit.toFixed(4)}
+                totalCredit={reviewValidation.totalCredit.toFixed(4)}
+                difference={reviewValidation.difference.toFixed(4)}
+                blockingErrors={draftValidation?.findings.filter((finding) => finding.severity === "ERROR").map((finding) => finding.message) ?? reviewErrors}
               />
             ) : null}
             {canManage && entry.status === "DRAFT" ? (
@@ -116,6 +131,11 @@ export default async function JournalEntryDetailPage({
                 journalEntryId={entry.id}
                 entryNumber={entry.entryNumber}
                 status={entry.status}
+                version={entry.version}
+                totalDebit={reviewValidation.totalDebit.toFixed(4)}
+                totalCredit={reviewValidation.totalCredit.toFixed(4)}
+                difference={reviewValidation.difference.toFixed(4)}
+                blockingErrors={draftValidation?.findings.filter((finding) => finding.severity === "ERROR").map((finding) => finding.message) ?? reviewErrors}
               />
             ) : null}
           </div>
@@ -129,6 +149,7 @@ export default async function JournalEntryDetailPage({
         <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field label="Entry Number" value={entry.entryNumber} />
           <Field label="Company" value={company.displayName} />
+          <Field label="Currency" value={company.currency} />
           <Field label="Entry Date" value={formatDate(entry.entryDate)} />
           <Field label="Fiscal Year" value={entry.fiscalYear.name} />
           <Field label="Accounting Period" value={entry.accountingPeriod.name} />
@@ -161,15 +182,19 @@ export default async function JournalEntryDetailPage({
         </div>
       ) : null}
 
-      {entry.status === "IN_REVIEW" ? (
+      {entry.status === "IN_REVIEW" || entry.status === "NEEDS_REVIEW" || entry.status === "NOT_BALANCED" || entry.status === "BALANCED" ? (
         <div className="rounded-lg border border-pending/20 bg-pending/5 px-4 py-3 text-sm text-ink-800">
-          <strong>Accounting Review</strong> — this journal entry is awaiting human review. Editing is locked until it is returned to Draft.
+          <strong>Human Review</strong> — this journal entry was prepared for human review. The server validation result is authoritative; approval does not post the entry.
         </div>
-      ) : entry.status === "READY_FOR_POSTING" ? (
+      ) : entry.status === "APPROVED" ? (
         <div className="rounded-lg border border-positive/20 bg-positive/5 px-4 py-3 text-sm text-ink-800">
-          <strong>Ready for Posting</strong> — human review and accounting validation have passed. This entry is not posted.
+          <strong>Approved</strong> — human approval is recorded. The entry is still unposted; pre-posting checks are required before it can become Ready to Post.
         </div>
-      ) : entry.status === "POSTED" ? (
+      ) : entry.status === "READY_TO_POST" || entry.status === "READY_FOR_POSTING" ? (
+          <div className="rounded-lg border border-positive/20 bg-positive/5 px-4 py-3 text-sm text-ink-800"><strong>Ready to Post</strong> — pre-posting checks have passed. No General Ledger, Trial Balance, or financial statement data has been changed.</div>
+        ) : entry.status === "REJECTED" ? (
+          <div className="rounded-lg border border-negative/20 bg-negative/5 px-4 py-3 text-sm text-ink-800"><strong>Rejected</strong> — this journal requires correction or a new review decision.</div>
+        ) : entry.status === "POSTED" ? (
         <div className="rounded-lg border border-ink-200 bg-surface-muted px-4 py-3 text-sm text-ink-700">
           Posted journal entries are locked.
         </div>
@@ -227,12 +252,39 @@ export default async function JournalEntryDetailPage({
               <>
                 <Field label="AI Provider" value={`${entry.aiSuggestion.provider}${entry.aiSuggestion.model ? ` (${entry.aiSuggestion.model})` : ""}`} />
                 <Field label="AI Confidence" value={entry.aiSuggestion.confidence} />
+                <Field label="AI-generated / User-corrected" value={entry.lines.some((line) => line.accountSource === "USER" || line.debitSource === "USER" || line.creditSource === "USER") ? "User-corrected fields present" : "AI-generated fields retained"} />
                 <Field label="AI Explanation" value={entry.aiSuggestion.explanation} />
               </>
             ) : null}
           </CardContent>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Approval History</CardTitle>
+          <CardDescription>Human review and approval events from the existing audit system.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Field label="Created By" value={entry.createdBy?.name} />
+            <Field label="Reviewed By" value={entry.reviewedByUser?.name} />
+            <Field label="Approved By" value={entry.approvedByUser?.name} />
+            <Field label="Reviewed At" value={entry.reviewedAt ? formatDate(entry.reviewedAt) : "—"} />
+            <Field label="Approved At" value={entry.approvedAt ? formatDate(entry.approvedAt) : "—"} />
+            <Field label="Rejected By" value={entry.rejectedByUser?.name} />
+          </div>
+          {entry.rejectionReason ? <div className="rounded-md border border-negative/20 bg-negative/5 px-3 py-2 text-sm text-ink-800"><strong>Rejection reason:</strong> {entry.rejectionReason}</div> : null}
+          <div className="divide-y divide-ink-100 rounded-md border border-ink-100">
+            {approvalHistory.filter((event) => event.action.startsWith("JOURNAL_")).map((event) => (
+              <div key={event.id} className="flex flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+                <div><p className="font-medium text-ink-900">{event.action.replaceAll("_", " ")}</p><p className="text-ink-600">{event.user.name}</p></div>
+                <p className="text-xs text-ink-500">{formatDate(event.createdAt)}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       {entry.aiReviewAudits.length > 0 ? (
         <Card>

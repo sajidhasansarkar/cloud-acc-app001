@@ -152,6 +152,12 @@ enum MappingSourceType {
 enum JournalEntryStatus {
   DRAFT
   IN_REVIEW
+  NEEDS_REVIEW
+  NOT_BALANCED
+  BALANCED
+  APPROVED
+  READY_TO_POST
+  REJECTED
   READY_FOR_POSTING
   POSTED
   VOID
@@ -348,6 +354,9 @@ model User {
   aiReviewRecords AIReviewRecord[]
   aiReviewAudits AIReviewAudit[]
   journalEntriesPosted JournalEntry[] @relation("JournalEntryPostedBy")
+  journalEntriesReviewed JournalEntry[] @relation("JournalEntryReviewedBy")
+  journalEntriesApproved JournalEntry[] @relation("JournalEntryApprovedBy")
+  journalEntriesRejected JournalEntry[] @relation("JournalEntryRejectedBy")
   aiReviewedRecords AIReviewRecord[] @relation("AIReviewedBy")
   accountMappingsReviewed TransactionAccountMapping[] @relation("AccountMappingReviewedBy")
 
@@ -361,6 +370,10 @@ model Organization {
   name      String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Phase 5A-8: configurable separation-of-duties rule for journal approval.
+  // Disabled by default to preserve existing organization behavior.
+  journalApprovalRequireDifferentUser Boolean @default(false)
 
   memberships Membership[]
   documentAuditEvents DocumentAuditEvent[]
@@ -1177,11 +1190,25 @@ model JournalEntry {
   // Optimistic concurrency token for draft edits.
   version Int @default(1)
 
+  // Phase 5A-8 approval/review gate metadata. Approval is independent from
+  // posting; these fields never create ledger rows.
+  reviewedByUserId String?
+  reviewedAt DateTime?
+  approvedByUserId String?
+  approvedAt DateTime?
+  approvedVersion Int?
+  rejectedByUserId String?
+  rejectedAt DateTime?
+  rejectionReason String?
+
   company          Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
   fiscalYear       FiscalYear       @relation(fields: [fiscalYearId], references: [id])
   accountingPeriod AccountingPeriod @relation(fields: [accountingPeriodId], references: [id])
   createdBy        User             @relation("JournalEntryCreatedBy", fields: [createdById], references: [id])
   postedByUser     User?            @relation("JournalEntryPostedBy", fields: [postedByUserId], references: [id])
+  reviewedByUser   User?            @relation("JournalEntryReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  approvedByUser   User?            @relation("JournalEntryApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  rejectedByUser   User?            @relation("JournalEntryRejectedBy", fields: [rejectedByUserId], references: [id], onDelete: SetNull)
 
   sourceDocument       Document?                       @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
   transactionCandidate NormalizedTransactionCandidate? @relation(fields: [transactionCandidateId], references: [id], onDelete: SetNull)
@@ -1207,6 +1234,9 @@ model JournalEntry {
   @@index([transactionCandidateId])
   @@index([sourceDocumentId])
   @@index([aiSuggestionId])
+  @@index([reviewedByUserId])
+  @@index([approvedByUserId])
+  @@index([rejectedByUserId])
   @@map("journal_entries")
 }
 

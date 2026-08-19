@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireActiveOrganization } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { canManageJournalEntries, canReviewJournalEntries } from "@/lib/rbac";
+import { canManageJournalEntries, canReviewJournalEntries, canApproveJournalEntry, canPostJournalEntry } from "@/lib/rbac";
 import {
   createJournalEntrySchema,
   updateJournalEntryHeaderSchema,
@@ -24,7 +24,12 @@ import {
   validateDraftJournalEntry,
   sendJournalEntryForReview,
   markJournalEntryReadyForPosting,
+  markJournalEntryReadyToPost,
   returnJournalEntryToDraft,
+  returnJournalEntryToEdit,
+  approveJournalEntry,
+  rejectJournalEntry,
+  returnRejectedJournalToReview,
   type JournalEntryResult,
   type ListJournalEntriesInput,
   type JournalEntryListResult,
@@ -389,10 +394,10 @@ export async function sendJournalEntryForReviewAction(companyId: string, journal
   return result;
 }
 
-export async function markJournalEntryReadyForPostingAction(companyId: string, journalEntryId: string) {
+export async function approveJournalEntryAction(companyId: string, journalEntryId: string, expectedVersion?: number) {
   const { role, user, organization } = await requireActiveOrganization();
-  if (!canReviewJournalEntries(role)) return { ok: false as const, error: "You don't have permission to approve journal entries." };
-  const result = await markJournalEntryReadyForPosting(organization.id, companyId, journalEntryId, user.id);
+  if (!canApproveJournalEntry(role)) return { ok: false as const, error: "You don't have permission to approve journal entries." };
+  const result = await approveJournalEntry(organization.id, companyId, journalEntryId, user.id, expectedVersion);
   if (result.ok) {
     revalidatePath(`/companies/${companyId}/journal-entries`);
     revalidatePath(`/companies/${companyId}/journal-entries/${journalEntryId}`);
@@ -400,13 +405,50 @@ export async function markJournalEntryReadyForPostingAction(companyId: string, j
   return result;
 }
 
-export async function returnJournalEntryToDraftAction(companyId: string, journalEntryId: string) {
+export async function rejectJournalEntryAction(companyId: string, journalEntryId: string, reason: string) {
   const { role, user, organization } = await requireActiveOrganization();
-  if (!canReviewJournalEntries(role)) return { ok: false as const, error: "You don't have permission to return journal entries to Draft." };
-  const result = await returnJournalEntryToDraft(organization.id, companyId, journalEntryId, user.id);
+  if (!canReviewJournalEntries(role)) return { ok: false as const, error: "You don't have permission to reject journal entries." };
+  const result = await rejectJournalEntry(organization.id, companyId, journalEntryId, user.id, reason);
   if (result.ok) {
     revalidatePath(`/companies/${companyId}/journal-entries`);
     revalidatePath(`/companies/${companyId}/journal-entries/${journalEntryId}`);
+  }
+  return result;
+}
+
+export async function returnRejectedJournalToReviewAction(companyId: string, journalEntryId: string) {
+  const { role, user, organization } = await requireActiveOrganization();
+  if (!canReviewJournalEntries(role)) return { ok: false as const, error: "You don't have permission to review journal entries." };
+  const result = await returnRejectedJournalToReview(organization.id, companyId, journalEntryId, user.id);
+  if (result.ok) {
+    revalidatePath(`/companies/${companyId}/journal-entries`);
+    revalidatePath(`/companies/${companyId}/journal-entries/${journalEntryId}`);
+  }
+  return result;
+}
+
+export async function returnJournalEntryToEditAction(companyId: string, journalEntryId: string) {
+  const { role, user, organization } = await requireActiveOrganization();
+  if (!canReviewJournalEntries(role)) return { ok: false as const, error: "You don't have permission to return journal entries to edit." };
+  const result = await returnJournalEntryToEdit(organization.id, companyId, journalEntryId, user.id);
+  if (result.ok) {
+    revalidatePath(`/companies/${companyId}/journal-entries`);
+    revalidatePath(`/companies/${companyId}/journal-entries/${journalEntryId}`);
+    revalidatePath(`/companies/${companyId}/journal-entries/${journalEntryId}/edit`);
+  }
+  return result;
+}
+
+export async function markJournalEntryReadyToPostAction(companyId: string, journalEntryId: string, expectedVersion?: number) {
+  const { role, user, organization } = await requireActiveOrganization();
+  if (!canReviewJournalEntries(role) || !canPostJournalEntry(role)) {
+    return { ok: false as const, error: "You don't have the required journal posting authority to mark this entry Ready to Post." };
+  }
+  const result = await markJournalEntryReadyToPost(organization.id, companyId, journalEntryId, user.id, expectedVersion);
+  if (result.ok) {
+    revalidatePath(`/companies/${companyId}/journal-entries`);
+    revalidatePath(`/companies/${companyId}/journal-entries/${journalEntryId}`);
+    revalidatePath(`/companies/${companyId}/journal-entries/ready-for-posting`);
   }
   return result;
 }

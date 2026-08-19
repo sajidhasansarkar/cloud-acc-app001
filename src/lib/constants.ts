@@ -171,11 +171,20 @@ export const JOURNAL_ENTRY_SOURCE_TYPE_LABELS: Record<(typeof JOURNAL_ENTRY_SOUR
 
 // Mirrors the JournalEntryStatus enum and drives the journal-entry status
 // filter and status badge without importing Prisma enums into client UI.
-export const JOURNAL_ENTRY_STATUSES = ["DRAFT", "IN_REVIEW", "READY_FOR_POSTING", "POSTED", "VOID"] as const;
+export const JOURNAL_ENTRY_STATUSES = [
+  "DRAFT", "IN_REVIEW", "NEEDS_REVIEW", "NOT_BALANCED", "BALANCED",
+  "APPROVED", "READY_TO_POST", "REJECTED", "READY_FOR_POSTING", "POSTED", "VOID",
+] as const;
 
 export const JOURNAL_ENTRY_STATUS_LABELS: Record<(typeof JOURNAL_ENTRY_STATUSES)[number], string> = {
   DRAFT: "Draft",
   IN_REVIEW: "In Review",
+  NEEDS_REVIEW: "Needs Review",
+  NOT_BALANCED: "Not Balanced",
+  BALANCED: "Balanced",
+  APPROVED: "Approved",
+  READY_TO_POST: "Ready to Post",
+  REJECTED: "Rejected",
   READY_FOR_POSTING: "Ready for Posting",
   POSTED: "Posted",
   VOID: "Void",

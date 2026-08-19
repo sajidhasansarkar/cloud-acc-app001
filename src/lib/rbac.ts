@@ -88,3 +88,24 @@ export function canReviewAI(role: Role) {
 export function canReviewJournalEntries(role: Role) {
   return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT" || role === "REVIEWER";
 }
+
+// Phase 5A-8 granular journal capabilities. These are centralized so future
+// permission storage can replace the role mapping without changing workflow code.
+export function canViewJournalEntries(role: Role) {
+  return canReviewJournalEntries(role);
+}
+export function canCreateJournalEntries(role: Role) {
+  return canManageJournalEntries(role);
+}
+export function canEditJournalEntries(role: Role) {
+  return canManageJournalEntries(role);
+}
+export function canReviewJournalEntry(role: Role) {
+  return canReviewJournalEntries(role);
+}
+export function canApproveJournalEntry(role: Role) {
+  return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT" || role === "REVIEWER";
+}
+export function canPostJournalEntry(role: Role) {
+  return role === "ADMIN" || role === "MANAGER" || role === "ACCOUNTANT";
+}

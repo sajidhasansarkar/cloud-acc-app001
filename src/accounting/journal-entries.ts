@@ -743,7 +743,7 @@ export type ReadyForPostingRow = {
   accountingPeriodId: string;
   accountingPeriodName: string;
   accountingPeriodStatus: "OPEN" | "CLOSED" | "LOCKED";
-  status: "READY_FOR_POSTING";
+  status: "READY_TO_POST";
   totalDebit: string;
   totalCredit: string;
   difference: string;
@@ -783,7 +783,7 @@ export async function listReadyForPostingJournalEntries(
   const direction = input.direction === "asc" ? "asc" : "desc";
   const conditions: Prisma.Sql[] = [
     Prisma.sql`je."companyId" = ${company.id}`,
-    Prisma.sql`je."status" = 'READY_FOR_POSTING'`,
+    Prisma.sql`je."status" = 'READY_TO_POST'`,
   ];
 
   const search = input.search?.trim();
@@ -833,7 +833,7 @@ export async function listReadyForPostingJournalEntries(
     accountingPeriodId: string;
     accountingPeriodName: string;
     accountingPeriodStatus: "OPEN" | "CLOSED" | "LOCKED";
-    status: "READY_FOR_POSTING";
+    status: "READY_TO_POST";
     totalDebit: Prisma.Decimal;
     totalCredit: Prisma.Decimal;
     difference: Prisma.Decimal;
@@ -935,7 +935,7 @@ export async function validateReadyForPostingJournalEntry(
 ): Promise<{ valid: true } | { valid: false; errors: string[] }> {
   const entry = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
   if (!entry) return { valid: false, errors: ["Journal entry not found."] };
-  if (entry.status !== "READY_FOR_POSTING") {
+  if (entry.status !== "READY_TO_POST" && entry.status !== "READY_FOR_POSTING") {
     return { valid: false, errors: ["This journal entry requires review before posting."] };
   }
 
@@ -974,7 +974,11 @@ export type ListJournalEntriesInput = {
 };
 
 export type JournalEntryListResult = {
-  entries: (JournalEntry & { createdBy: { id: string; name: string } | null })[];
+  entries: (JournalEntry & {
+    createdBy: { id: string; name: string } | null;
+    reviewedByUser: { id: string; name: string } | null;
+    approvedByUser: { id: string; name: string } | null;
+  })[];
   total: number;
   page: number;
   pageSize: number;
@@ -1063,7 +1067,11 @@ export async function listJournalEntries(
     prisma.journalEntry.count({ where }),
     prisma.journalEntry.findMany({
       where,
-      include: { createdBy: { select: { id: true, name: true } } },
+      include: {
+        createdBy: { select: { id: true, name: true } },
+        reviewedByUser: { select: { id: true, name: true } },
+        approvedByUser: { select: { id: true, name: true } },
+      },
       orderBy,
       skip: (page - 1) * pageSize,
       take: pageSize,
@@ -1078,7 +1086,11 @@ export async function listJournalEntries(
   if (safePage !== page && total > 0) {
     const finalEntries = await prisma.journalEntry.findMany({
       where,
-      include: { createdBy: { select: { id: true, name: true } } },
+      include: {
+        createdBy: { select: { id: true, name: true } },
+        reviewedByUser: { select: { id: true, name: true } },
+        approvedByUser: { select: { id: true, name: true } },
+      },
       orderBy,
       skip: (safePage - 1) * pageSize,
       take: pageSize,
@@ -1549,39 +1561,91 @@ export async function reorderJournalEntryLine(
 }
 
 // ------------------------------
-// Human review status transitions (Phase 4B-8). These are review gates;
-// POSTED remains a separate existing lifecycle state and no posting side
-// effects are introduced here.
+// Human review, approval and pre-posting control (Phase 5A-8)
 // ------------------------------
 
-const ALLOWED_STATUS_TRANSITIONS: Record<JournalEntry["status"], JournalEntry["status"][]> = {
-  DRAFT: ["IN_REVIEW", "VOID"],
-  IN_REVIEW: ["DRAFT", "READY_FOR_POSTING"],
+const APPROVAL_AUDIT_ACTIONS = {
+  REVIEW_STARTED: "JOURNAL_REVIEW_STARTED",
+  SENT_FOR_REVIEW: "JOURNAL_SENT_FOR_REVIEW",
+  APPROVED: "JOURNAL_APPROVED",
+  REJECTED: "JOURNAL_REJECTED",
+  RETURNED_FOR_EDIT: "JOURNAL_RETURNED_FOR_EDIT",
+  APPROVAL_INVALIDATED: "JOURNAL_APPROVAL_INVALIDATED",
+  MARKED_READY: "JOURNAL_MARKED_READY_TO_POST",
+} as const;
+
+const PHASE5A8_EDITABLE_STATES: JournalEntryStatus[] = [
+  "DRAFT",
+];
+
+const PHASE5A8_REVIEWABLE_STATES: JournalEntryStatus[] = [
+  "NEEDS_REVIEW",
+  "NOT_BALANCED",
+  "BALANCED",
+];
+
+async function journalAudit(
+  organizationId: string,
+  companyId: string,
+  userId: string,
+  action: string,
+  journalEntryId: string,
+  details: Prisma.InputJsonValue,
+  documentId?: string | null
+) {
+  await recordJournalAudit(organizationId, companyId, userId, action, {
+    journalEntryId,
+    ...details,
+  }, documentId);
+}
+
+/**
+ * Phase 5A-8 lifecycle. Legacy IN_REVIEW / READY_FOR_POSTING are retained
+ * only for compatibility with records created by earlier phases.
+ */
+const ALLOWED_STATUS_TRANSITIONS: Record<JournalEntryStatus, JournalEntryStatus[]> = {
+  DRAFT: ["NEEDS_REVIEW", "IN_REVIEW", "VOID"],
+  IN_REVIEW: ["NEEDS_REVIEW", "BALANCED", "NOT_BALANCED", "REJECTED", "DRAFT"],
+  NEEDS_REVIEW: ["BALANCED", "NOT_BALANCED", "REJECTED", "DRAFT"],
+  NOT_BALANCED: ["NEEDS_REVIEW", "REJECTED", "DRAFT"],
+  BALANCED: ["APPROVED", "REJECTED", "DRAFT"],
+  APPROVED: ["READY_TO_POST", "DRAFT"],
+  READY_TO_POST: ["DRAFT"],
+  REJECTED: ["NEEDS_REVIEW", "DRAFT"],
   READY_FOR_POSTING: ["DRAFT"],
   POSTED: [],
   VOID: [],
 };
 
-/**
- * Transitions a journal entry's lifecycle status while enforcing the single
- * server-side state machine. Review states never create ledger records.
- */
+async function transitionJournalEntryStatus(
+  tx: Prisma.TransactionClient,
+  journalEntryId: string,
+  companyId: string,
+  currentStatus: JournalEntryStatus,
+  nextStatus: JournalEntryStatus
+) {
+  const updated = await tx.journalEntry.updateMany({
+    where: {
+      id: journalEntryId,
+      companyId,
+      status: currentStatus,
+    },
+    data: { status: nextStatus },
+  });
+  if (updated.count !== 1) throw new Error("JOURNAL_STATUS_CONCURRENT_CHANGE");
+}
+
 export async function setJournalEntryStatus(
   organizationId: string,
   companyId: string,
   journalEntryId: string,
-  nextStatus: JournalEntry["status"]
+  nextStatus: JournalEntryStatus
 ): Promise<JournalEntryResult> {
   const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
-  if (!existing) {
-    return { ok: false, error: "Journal entry not found." };
-  }
+  if (!existing) return { ok: false, error: "Journal entry not found." };
 
   if (!ALLOWED_STATUS_TRANSITIONS[existing.status].includes(nextStatus)) {
-    return {
-      ok: false,
-      error: `Cannot change a ${existing.status} entry to ${nextStatus}.`,
-    };
+    return { ok: false, error: `Cannot change a ${existing.status} entry to ${nextStatus}.` };
   }
 
   const entry = await prisma.journalEntry.update({
@@ -1592,6 +1656,10 @@ export async function setJournalEntryStatus(
   return { ok: true, entry };
 }
 
+/**
+ * Start the Phase 5A-8 human review. The deterministic validation engine is
+ * authoritative; the browser's previous validation result is ignored.
+ */
 export async function sendJournalEntryForReview(
   organizationId: string,
   companyId: string,
@@ -1600,78 +1668,328 @@ export async function sendJournalEntryForReview(
 ): Promise<JournalEntryResult & { validationErrors?: string[] }> {
   const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
   if (!existing) return { ok: false, error: "Journal entry not found." };
-  if (existing.status !== "DRAFT") {
-    return { ok: false, error: `Only DRAFT journal entries can be sent for review.` };
+  if (existing.status !== "DRAFT") return { ok: false, error: "Only DRAFT journal entries can be sent for review." };
+
+  const validation = await validateDraftJournalEntry(organizationId, existing.id);
+  if (!validation) return { ok: false, error: "Journal entry not found." };
+
+  const nextStatus: JournalEntryStatus = validation.findings.some((f) => f.severity === "ERROR")
+    ? (validation.isBalanced ? "NEEDS_REVIEW" : "NOT_BALANCED")
+    : validation.isBalanced ? "BALANCED" : "NOT_BALANCED";
+
+  try {
+    const entry = await prisma.$transaction(async (tx) => {
+      const current = await tx.journalEntry.findFirst({
+        where: { id: existing.id, companyId, company: { organizationId } },
+        select: { id: true, status: true, version: true, sourceDocumentId: true },
+      });
+      if (!current) throw new Error("JOURNAL_ENTRY_NOT_FOUND");
+      if (current.status !== "DRAFT") throw new Error("JOURNAL_STATUS_CONCURRENT_CHANGE");
+
+      await transitionJournalEntryStatus(tx, existing.id, companyId, "DRAFT", nextStatus);
+      await tx.journalEntry.update({
+        where: { id: existing.id },
+        data: { reviewedByUserId: userId, reviewedAt: new Date() },
+      });
+      return tx.journalEntry.findUniqueOrThrow({ where: { id: existing.id }, include: { lines: true } });
+    });
+
+    await journalAudit(
+      organizationId, companyId, userId, APPROVAL_AUDIT_ACTIONS.REVIEW_STARTED, entry.id,
+      { previousStatus: "DRAFT", newStatus: nextStatus },
+      existing.sourceDocumentId
+    );
+    await journalAudit(
+      organizationId, companyId, userId, APPROVAL_AUDIT_ACTIONS.SENT_FOR_REVIEW, entry.id,
+      { validationStatus: validation.status, errorCount: validation.findings.filter((f) => f.severity === "ERROR").length },
+      existing.sourceDocumentId
+    );
+    return { ok: true, entry };
+  } catch (error) {
+    if (error instanceof Error && error.message === "JOURNAL_STATUS_CONCURRENT_CHANGE") {
+      return { ok: false, error: "Journal was modified. Please review the latest version." };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Final approval gate. All requirements are re-read and recalculated inside
+ * a transaction, including the optimistic version and configurable SOD rule.
+ */
+export async function approveJournalEntry(
+  organizationId: string,
+  companyId: string,
+  journalEntryId: string,
+  userId: string,
+  expectedVersion?: number
+): Promise<JournalEntryResult> {
+  const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
+  if (!existing) return { ok: false, error: "Journal entry not found." };
+  if (existing.status !== "BALANCED") return { ok: false, error: "Only a BALANCED journal entry can be approved." };
+
+  const validation = await validateDraftJournalEntry(organizationId, existing.id);
+  if (!validation) return { ok: false, error: "Journal entry not found." };
+  const blocking = validation.findings.filter((f) => f.severity === "ERROR");
+  if (!validation.isBalanced || blocking.length > 0) {
+    return { ok: false, error: blocking.map((f) => f.message).concat(!validation.isBalanced ? ["Journal entry is not balanced."] : []).join(" ") };
   }
 
-  const validation = await validateJournalEntryForReview(organizationId, journalEntryId);
-  if (!validation.valid) {
-    return { ok: false, error: validation.errors.join(" "), validationErrors: validation.errors };
+  try {
+    const entry = await prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.findUnique({
+        where: { id: organizationId },
+        select: { journalApprovalRequireDifferentUser: true },
+      });
+      if (!organization) throw new Error("JOURNAL_ORGANIZATION_NOT_FOUND");
+
+      const current = await tx.journalEntry.findFirst({
+        where: { id: journalEntryId, companyId, company: { organizationId } },
+        select: { id: true, status: true, version: true, createdById: true, sourceDocumentId: true },
+      });
+      if (!current) throw new Error("JOURNAL_ENTRY_NOT_FOUND");
+      if (current.status !== "BALANCED") throw new Error("JOURNAL_STATUS_CONCURRENT_CHANGE");
+      if (expectedVersion !== undefined && current.version !== expectedVersion) throw new Error("JOURNAL_VERSION_CONFLICT");
+      if (organization.journalApprovalRequireDifferentUser && current.createdById === userId) {
+        throw new Error("JOURNAL_SOD");
+      }
+
+      // Re-run the deterministic engine inside the approval transaction.
+      const fresh = await tx.journalEntry.findUniqueOrThrow({
+        where: { id: current.id },
+        include: {
+          lines: true,
+          fiscalYear: true,
+          accountingPeriod: true,
+        },
+      });
+      const freshValidation = await validateJournalEntryForReview(organizationId, fresh.id);
+      if (!freshValidation.valid || !freshValidation.balanced) throw new Error("JOURNAL_APPROVAL_VALIDATION");
+      if (expectedVersion !== undefined && fresh.version !== expectedVersion) throw new Error("JOURNAL_VERSION_CONFLICT");
+
+      await transitionJournalEntryStatus(tx, current.id, companyId, "BALANCED", "APPROVED");
+      return tx.journalEntry.update({
+        where: { id: current.id },
+        data: {
+          approvedByUserId: userId,
+          approvedAt: new Date(),
+          approvedVersion: current.version,
+          rejectionReason: null,
+          rejectedByUserId: null,
+          rejectedAt: null,
+          reviewedByUserId: userId,
+          reviewedAt: new Date(),
+        },
+        include: { lines: true },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+    await journalAudit(organizationId, companyId, userId, APPROVAL_AUDIT_ACTIONS.APPROVED, entry.id, {
+      previousStatus: "BALANCED",
+      newStatus: "APPROVED",
+      approvedVersion: entry.approvedVersion ?? null,
+    }, existing.sourceDocumentId);
+    return { ok: true, entry };
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "JOURNAL_VERSION_CONFLICT") return { ok: false, error: "Journal was modified. Please review the latest version." };
+      if (error.message === "JOURNAL_SOD") return { ok: false, error: "Separation of duties prevents the journal creator from approving this journal." };
+      if (error.message === "JOURNAL_APPROVAL_VALIDATION") return { ok: false, error: "The journal changed or failed final validation. Please review the latest version." };
+      if (error.message === "JOURNAL_STATUS_CONCURRENT_CHANGE") return { ok: false, error: "Journal was modified. Please review the latest version." };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Reject a journal with a mandatory reason. Rejected entries remain unposted
+ * and can later be returned to review.
+ */
+export async function rejectJournalEntry(
+  organizationId: string,
+  companyId: string,
+  journalEntryId: string,
+  userId: string,
+  reason: string
+): Promise<JournalEntryResult> {
+  const cleanReason = reason.trim();
+  if (!cleanReason) return { ok: false, error: "A rejection reason is required." };
+
+  const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
+  if (!existing) return { ok: false, error: "Journal entry not found." };
+  if (!PHASE5A8_REVIEWABLE_STATES.includes(existing.status)) {
+    return { ok: false, error: "Only journals in review can be rejected." };
   }
 
   const entry = await prisma.$transaction(async (tx) => {
     const updated = await tx.journalEntry.update({
       where: { id: existing.id },
-      data: { status: "IN_REVIEW" },
+      data: {
+        status: "REJECTED",
+        rejectionReason: cleanReason,
+        rejectedByUserId: userId,
+        rejectedAt: new Date(),
+        approvedByUserId: null,
+        approvedAt: null,
+        approvedVersion: null,
+      },
       include: { lines: true },
     });
-
-    await tx.aIReviewAudit.create({
-      data: {
-        candidateId: existing.transactionCandidateId,
-        suggestionId: existing.aiSuggestionId,
-        action: "JOURNAL_SENT_FOR_REVIEW",
-        userId,
-        journalEntryId: existing.id,
-        relevantCorrection: "Journal Entry passed accounting validation and was sent for human review.",
-      },
-    });
-
     return updated;
   });
 
+  await journalAudit(organizationId, companyId, userId, APPROVAL_AUDIT_ACTIONS.REJECTED, entry.id, {
+    previousStatus: existing.status,
+    newStatus: "REJECTED",
+    reason: cleanReason,
+  }, existing.sourceDocumentId);
   return { ok: true, entry };
 }
 
+export async function returnRejectedJournalToReview(
+  organizationId: string,
+  companyId: string,
+  journalEntryId: string,
+  userId: string
+): Promise<JournalEntryResult> {
+  const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
+  if (!existing) return { ok: false, error: "Journal entry not found." };
+  if (existing.status !== "REJECTED") return { ok: false, error: "Only rejected journals can return to review." };
+
+  const entry = await prisma.journalEntry.update({
+    where: { id: existing.id },
+    data: { status: "NEEDS_REVIEW", reviewedByUserId: userId, reviewedAt: new Date() },
+    include: { lines: true },
+  });
+  await journalAudit(organizationId, companyId, userId, APPROVAL_AUDIT_ACTIONS.SENT_FOR_REVIEW, entry.id, {
+    previousStatus: "REJECTED",
+    newStatus: "NEEDS_REVIEW",
+  }, existing.sourceDocumentId);
+  return { ok: true, entry };
+}
+
+/**
+ * Return to Edit invalidates any approval and moves the journal back to DRAFT.
+ * No approved state survives an accounting edit.
+ */
+export async function returnJournalEntryToEdit(
+  organizationId: string,
+  companyId: string,
+  journalEntryId: string,
+  userId: string
+): Promise<JournalEntryResult> {
+  const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
+  if (!existing) return { ok: false, error: "Journal entry not found." };
+  const editableReturnStates: JournalEntryStatus[] = ["NEEDS_REVIEW", "NOT_BALANCED", "BALANCED", "APPROVED", "READY_TO_POST", "REJECTED"];
+  if (!editableReturnStates.includes(existing.status)) {
+    return { ok: false, error: "This journal cannot be returned to edit from its current state." };
+  }
+
+  const entry = await prisma.$transaction(async (tx) => {
+    const updated = await tx.journalEntry.update({
+      where: { id: existing.id },
+      data: {
+        status: "DRAFT",
+        approvedByUserId: null,
+        approvedAt: null,
+        approvedVersion: null,
+        rejectionReason: null,
+        rejectedByUserId: null,
+        rejectedAt: null,
+      },
+      include: { lines: true },
+    });
+    return updated;
+  });
+
+  if (existing.status === "APPROVED" || existing.status === "READY_TO_POST") {
+    await journalAudit(organizationId, companyId, userId, APPROVAL_AUDIT_ACTIONS.APPROVAL_INVALIDATED, entry.id, {
+      previousStatus: existing.status,
+      newStatus: "DRAFT",
+      reason: "Journal returned to edit; prior approval is no longer valid.",
+    }, existing.sourceDocumentId);
+  }
+  await journalAudit(organizationId, companyId, userId, APPROVAL_AUDIT_ACTIONS.RETURNED_FOR_EDIT, entry.id, {
+    previousStatus: existing.status,
+    newStatus: "DRAFT",
+  }, existing.sourceDocumentId);
+  return { ok: true, entry };
+}
+
+/**
+ * Promote an APPROVED journal to READY_TO_POST only after the current server
+ * state passes all pre-posting checks. This phase does not post anything.
+ */
+export async function markJournalEntryReadyToPost(
+  organizationId: string,
+  companyId: string,
+  journalEntryId: string,
+  userId: string,
+  expectedVersion?: number
+): Promise<JournalEntryResult> {
+  const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
+  if (!existing) return { ok: false, error: "Journal entry not found." };
+  if (existing.status !== "APPROVED") return { ok: false, error: "Only APPROVED journal entries can become READY_TO_POST." };
+
+  const validation = await validateJournalEntryForReview(organizationId, journalEntryId);
+  if (!validation.valid || !validation.balanced) {
+    return { ok: false, error: validation.errors.join(" ") || "Journal entry failed final validation." };
+  }
+
+  try {
+    const entry = await prisma.$transaction(async (tx) => {
+      const current = await tx.journalEntry.findFirst({
+        where: { id: journalEntryId, companyId, company: { organizationId } },
+        include: { fiscalYear: true, accountingPeriod: true },
+      });
+      if (!current) throw new Error("JOURNAL_ENTRY_NOT_FOUND");
+      if (current.status !== "APPROVED") throw new Error("JOURNAL_STATUS_CONCURRENT_CHANGE");
+      if (expectedVersion !== undefined && current.version !== expectedVersion) throw new Error("JOURNAL_VERSION_CONFLICT");
+      if (current.approvedVersion !== null && current.approvedVersion !== current.version) throw new Error("JOURNAL_VERSION_CONFLICT");
+
+      const errors: string[] = [];
+      if (current.fiscalYear.companyId !== companyId) errors.push("Fiscal year is not valid for this company.");
+      if (current.accountingPeriod.companyId !== companyId || current.accountingPeriod.fiscalYearId !== current.fiscalYear.id) errors.push("Accounting period is not valid for this fiscal year.");
+      if (current.fiscalYear.status !== "OPEN") errors.push(`Fiscal year is ${current.fiscalYear.status.toLowerCase()}.`);
+      if (current.accountingPeriod.status !== "OPEN") errors.push(`Accounting period is ${current.accountingPeriod.status.toLowerCase()}.`);
+
+      const accounts = await tx.journalEntryLine.findMany({
+        where: { journalEntryId: current.id },
+        include: { account: true },
+      });
+      if (accounts.some((line) => !line.account.isActive || line.account.companyId !== companyId)) {
+        errors.push("One or more journal lines reference an inactive or invalid account.");
+      }
+      if (errors.length) throw new Error(`JOURNAL_PREPOSTING:${[...new Set(errors)].join(" ")}`);
+
+      await transitionJournalEntryStatus(tx, current.id, companyId, "APPROVED", "READY_TO_POST");
+      return tx.journalEntry.findUniqueOrThrow({ where: { id: current.id }, include: { lines: true } });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+    await journalAudit(organizationId, companyId, userId, APPROVAL_AUDIT_ACTIONS.MARKED_READY, entry.id, {
+      previousStatus: "APPROVED",
+      newStatus: "READY_TO_POST",
+    }, existing.sourceDocumentId);
+    return { ok: true, entry };
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "JOURNAL_VERSION_CONFLICT") return { ok: false, error: "Journal was modified. Please review the latest version." };
+      if (error.message === "JOURNAL_STATUS_CONCURRENT_CHANGE") return { ok: false, error: "Journal was modified. Please review the latest version." };
+      if (error.message.startsWith("JOURNAL_PREPOSTING:")) return { ok: false, error: error.message.slice("JOURNAL_PREPOSTING:".length) };
+    }
+    throw error;
+  }
+}
+
+// Compatibility wrappers retained for prior phases. Phase 5A-8 UI does not
+// call the legacy READY_FOR_POSTING path.
 export async function markJournalEntryReadyForPosting(
   organizationId: string,
   companyId: string,
   journalEntryId: string,
   userId: string
 ): Promise<JournalEntryResult & { validationErrors?: string[] }> {
-  const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
-  if (!existing) return { ok: false, error: "Journal entry not found." };
-  if (existing.status !== "IN_REVIEW") {
-    return { ok: false, error: "Only journal entries in review can be marked ready for posting." };
-  }
-
-  const validation = await validateJournalEntryForReview(organizationId, journalEntryId);
-  if (!validation.valid) {
-    return { ok: false, error: validation.errors.join(" "), validationErrors: validation.errors };
-  }
-
-  const entry = await prisma.$transaction(async (tx) => {
-    const updated = await tx.journalEntry.update({
-      where: { id: existing.id },
-      data: { status: "READY_FOR_POSTING" },
-      include: { lines: true },
-    });
-
-    await tx.aIReviewAudit.create({
-      data: {
-        candidateId: existing.transactionCandidateId,
-        suggestionId: existing.aiSuggestionId,
-        action: "JOURNAL_MARKED_READY",
-        userId,
-        journalEntryId: existing.id,
-        relevantCorrection: "Human review completed; journal entry passed all accounting validation rules.",
-      },
-    });
-
-    return updated;
-  });
-
-  return { ok: true, entry };
+  return markJournalEntryReadyToPost(organizationId, companyId, journalEntryId, userId);
 }
 
 export async function returnJournalEntryToDraft(
@@ -1680,34 +1998,7 @@ export async function returnJournalEntryToDraft(
   journalEntryId: string,
   userId: string
 ): Promise<JournalEntryResult> {
-  const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
-  if (!existing) return { ok: false, error: "Journal entry not found." };
-  if (existing.status !== "IN_REVIEW" && existing.status !== "READY_FOR_POSTING") {
-    return { ok: false, error: "Only entries in review or ready for posting can be returned to Draft." };
-  }
-
-  const entry = await prisma.$transaction(async (tx) => {
-    const updated = await tx.journalEntry.update({
-      where: { id: existing.id },
-      data: { status: "DRAFT" },
-      include: { lines: true },
-    });
-
-    await tx.aIReviewAudit.create({
-      data: {
-        candidateId: existing.transactionCandidateId,
-        suggestionId: existing.aiSuggestionId,
-        action: "JOURNAL_RETURNED_TO_DRAFT",
-        userId,
-        journalEntryId: existing.id,
-        relevantCorrection: `Journal Entry returned from ${existing.status} to DRAFT for further correction.`,
-      },
-    });
-
-    return updated;
-  });
-
-  return { ok: true, entry };
+  return returnJournalEntryToEdit(organizationId, companyId, journalEntryId, userId);
 }
 
 export async function postJournalEntry(

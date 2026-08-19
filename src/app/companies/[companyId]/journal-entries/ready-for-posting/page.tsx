@@ -81,7 +81,7 @@ export default async function ReadyForPostingPage({
       date,
       fiscalYearId,
       accountingPeriodId,
-      status: searchParams.status === "READY_FOR_POSTING" || !searchParams.status ? "READY_FOR_POSTING" : undefined,
+      status: searchParams.status === "READY_TO_POST" || !searchParams.status ? "READY_TO_POST" : undefined,
       sort,
       direction,
       page,
@@ -116,7 +116,7 @@ export default async function ReadyForPostingPage({
       </div>
 
       <div className="rounded-lg border border-pending/20 bg-pending/5 px-4 py-3 text-sm text-ink-800">
-        <div className="flex items-start gap-2"><ClipboardCheck className="mt-0.5 h-4 w-4 shrink-0 text-pending" /><p><strong>Posting is not available in this phase.</strong> Entries shown here have reached READY_FOR_POSTING, but the actual POST action belongs to a future phase.</p></div>
+        <div className="flex items-start gap-2"><ClipboardCheck className="mt-0.5 h-4 w-4 shrink-0 text-pending" /><p><strong>Posting is not available in this phase.</strong> Entries shown here have reached READY_TO_POST, but the actual posting action belongs to a future phase.</p></div>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-ink-100 bg-white shadow-card">

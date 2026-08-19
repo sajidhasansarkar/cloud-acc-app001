@@ -36,6 +36,8 @@ export function JournalEntriesTable({
           <TableHead>Description</TableHead>
           <TableHead>Label</TableHead>
           <TableHead>Status</TableHead>
+          <TableHead>Reviewer</TableHead>
+          <TableHead>Approval</TableHead>
           <TableHead>Source</TableHead>
           <TableHead>Created By</TableHead>
           <TableHead>Created Date</TableHead>
@@ -59,6 +61,8 @@ export function JournalEntriesTable({
             <TableCell>
               <JournalEntryStatusBadge status={entry.status} />
             </TableCell>
+            <TableCell className="text-ink-500">{entry.reviewedByUser?.name ?? "—"}</TableCell>
+            <TableCell className="text-ink-500">{entry.approvedByUser?.name ? `Approved by ${entry.approvedByUser.name}` : "Not approved"}</TableCell>
             <TableCell className="text-ink-500">
               {JOURNAL_ENTRY_SOURCE_TYPE_LABELS[entry.sourceType as JournalEntrySourceType]}
             </TableCell>
