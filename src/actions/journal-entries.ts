@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireActiveOrganization } from "@/lib/session";
+import { prisma } from "@/lib/prisma";
 import { canManageJournalEntries, canReviewJournalEntries } from "@/lib/rbac";
 import {
   createJournalEntrySchema,
@@ -20,6 +21,7 @@ import {
   updateJournalEntry,
   validateJournalEntryBalance,
   validateJournalEntryForReview,
+  validateDraftJournalEntry,
   sendJournalEntryForReview,
   markJournalEntryReadyForPosting,
   returnJournalEntryToDraft,
@@ -108,6 +110,109 @@ export async function listJournalEntryLabelsAction(companyId: string): Promise<s
 export async function getJournalEntryAction(companyId: string, journalEntryId: string) {
   const { organization } = await requireActiveOrganization();
   return getJournalEntry(organization.id, companyId, journalEntryId);
+}
+
+/**
+ * Phase 5A-7 server-authoritative Draft validation. The caller must be
+ * authenticated and have either journal-management or review permission;
+ * the accounting layer re-checks organization/company ownership from the
+ * journalEntryId before reading any lines.
+ */
+export async function validateDraftJournalEntryAction(companyId: string, journalEntryId: string) {
+  const { role, organization, user } = await requireActiveOrganization();
+  if (!canManageJournalEntries(role) && !canReviewJournalEntries(role)) {
+    return { ok: false as const, error: "You don't have permission to validate journal entries." };
+  }
+
+  const entry = await getJournalEntry(organization.id, companyId, journalEntryId);
+  if (!entry) return { ok: false as const, error: "Journal entry not found." };
+
+  const validation = await validateDraftJournalEntry(organization.id, journalEntryId);
+  if (!validation) return { ok: false as const, error: "Journal entry not found." };
+
+  // Reuse the existing DocumentAuditEvent journal audit stream. Validation
+  // is deterministic, so no AI/provider call is made here. Compare with the
+  // previous validation snapshot so meaningful state/finding transitions are
+  // auditable without introducing a second audit table.
+  const previousAudit = await prisma.documentAuditEvent.findFirst({
+    where: { organizationId: organization.id, companyId, action: "JOURNAL_VALIDATION_RUN", details: { path: ["journalEntryId"], equals: journalEntryId } },
+    orderBy: { createdAt: "desc" },
+    select: { details: true },
+  });
+  const previousDetails = previousAudit?.details && typeof previousAudit.details === "object" && !Array.isArray(previousAudit.details)
+    ? previousAudit.details as Record<string, unknown>
+    : null;
+
+  await prisma.documentAuditEvent.create({
+    data: {
+      organizationId: organization.id,
+      companyId,
+      userId: user.id,
+      documentId: entry.sourceDocumentId ?? null,
+      action: "JOURNAL_VALIDATION_RUN",
+      details: {
+        journalEntryId,
+        status: validation.status,
+        readyForReview: validation.readyForReview,
+        totalDebit: validation.totalDebit.toFixed(4),
+        totalCredit: validation.totalCredit.toFixed(4),
+        difference: validation.difference.toFixed(4),
+        isBalanced: validation.isBalanced,
+        findingCodes: validation.findings.map((finding) => finding.code),
+        findingCount: validation.findings.length,
+        errorCount: validation.findings.filter((f) => f.severity === "ERROR").length,
+      },
+    },
+  });
+
+  if (previousDetails && previousDetails.isBalanced !== validation.isBalanced) {
+    await prisma.documentAuditEvent.create({
+      data: {
+        organizationId: organization.id,
+        companyId,
+        userId: user.id,
+        documentId: entry.sourceDocumentId ?? null,
+        action: validation.isBalanced ? "JOURNAL_BECAME_BALANCED" : "JOURNAL_BECAME_UNBALANCED",
+        details: { journalEntryId, difference: validation.difference.toFixed(4) },
+      },
+    });
+  }
+
+  const currentFindingCodes = new Set(validation.findings.map((finding) => finding.code));
+  const previousFindingCodes = Array.isArray(previousDetails?.findingCodes)
+    ? new Set(previousDetails.findingCodes.filter((value): value is string => typeof value === "string"))
+    : new Set<string>();
+  for (const finding of validation.findings) {
+    if (!previousFindingCodes.has(finding.code)) {
+      await prisma.documentAuditEvent.create({
+        data: {
+          organizationId: organization.id,
+          companyId,
+          userId: user.id,
+          documentId: entry.sourceDocumentId ?? null,
+          action: "VALIDATION_FINDING_CREATED",
+          details: { journalEntryId, code: finding.code, severity: finding.severity, message: finding.message, lineId: finding.lineId ?? null, field: finding.field ?? null },
+        },
+      });
+    }
+  }
+  for (const code of previousFindingCodes) {
+    if (!currentFindingCodes.has(code)) {
+      await prisma.documentAuditEvent.create({
+        data: { organizationId: organization.id, companyId, userId: user.id, documentId: entry.sourceDocumentId ?? null, action: "VALIDATION_FINDING_RESOLVED", details: { journalEntryId, code } },
+      });
+    }
+  }
+
+  return {
+    ok: true as const,
+    validation: {
+      ...validation,
+      totalDebit: validation.totalDebit.toFixed(4),
+      totalCredit: validation.totalCredit.toFixed(4),
+      difference: validation.difference.toFixed(4),
+    },
+  };
 }
 
 /**

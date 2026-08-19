@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
-import { createJournalEntryAction, updateJournalEntryAction } from "@/actions/journal-entries";
+import { createJournalEntryAction, updateJournalEntryAction, validateDraftJournalEntryAction } from "@/actions/journal-entries";
 import { listAccountingPeriodsAction } from "@/actions/accounting-periods";
 import { JOURNAL_ENTRY_SOURCE_TYPES, JOURNAL_ENTRY_SOURCE_TYPE_LABELS } from "@/lib/constants";
 import { JournalLinesEditor, type JournalLineDraft } from "@/components/journal-entries/journal-lines-editor";
@@ -215,6 +215,10 @@ export function JournalEntryForm({
             });
 
       if (result.ok) {
+        // The save path is authoritative. Run the Phase 5A-7 server
+        // validation after the draft write so persisted state is never
+        // considered valid solely from client arithmetic.
+        await validateDraftJournalEntryAction(companyId, result.entry.id);
         toast(mode === "edit" ? "Journal entry updated." : "Journal entry saved as draft.", "success");
         router.push(`/companies/${companyId}/journal-entries/${result.entry.id}`);
         router.refresh();

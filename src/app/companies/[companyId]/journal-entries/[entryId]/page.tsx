@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { AlertTriangle, ArrowLeft, Pencil, ListChecks } from "lucide-react";
 import { requireActiveOrganization } from "@/lib/session";
 import { requireOwnedCompany } from "@/lib/company-guard";
-import { getJournalEntry, validateJournalEntryBalance, validateJournalEntryForReview, validateReadyForPostingJournalEntry } from "@/accounting/journal-entries";
+import { getJournalEntry, validateJournalEntryBalance, validateJournalEntryForReview, validateReadyForPostingJournalEntry, validateDraftJournalEntry } from "@/accounting/journal-entries";
 import { canManageJournalEntries, canReviewJournalEntries } from "@/lib/rbac";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
@@ -68,6 +68,7 @@ export default async function JournalEntryDetailPage({
           ? "Credit exceeds Debit"
           : "Journal entry is not balanced.";
   const reviewValidation = await validateJournalEntryForReview(organization.id, entry.id);
+  const draftValidation = await validateDraftJournalEntry(organization.id, entry.id);
   const reviewErrors = reviewValidation.valid ? [] : reviewValidation.errors;
   const readyCheck = entry.status === "READY_FOR_POSTING"
     ? await validateReadyForPostingJournalEntry(organization.id, company.id, entry.id)
@@ -186,6 +187,7 @@ export default async function JournalEntryDetailPage({
         difference={reviewValidation.difference.toFixed(4)}
         balanced={reviewValidation.balanced}
         status={entry.status}
+        findings={draftValidation?.findings ?? []}
       />
 
       {entry.transactionCandidate || entry.sourceDocument || entry.aiSuggestion ? (

@@ -192,6 +192,22 @@ export function JournalLinesEditor({
     ? null
     : validationMessage ?? (compareDecimalStrings(difference, "0") > 0 ? "Debit exceeds Credit" : "Credit exceeds Debit");
 
+  const findings = lines.flatMap((line, index) => {
+    const message = lineErrors[index];
+    if (!message) return [];
+    const field = message.includes("Account") ? "accountId" : message.includes("Debit") || message.includes("Credit") || message.includes("Amount") ? "debit/credit" : "line";
+    return [{ message, lineNumber: index + 1, key: line.key, field }];
+  });
+
+  function focusFinding(key: string, field: string) {
+    const target = document.getElementById(`journal-line-${key}-${field}`);
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (target instanceof HTMLElement) {
+      const focusTarget = target.querySelector<HTMLElement>("input, button, select, textarea") ?? target;
+      focusTarget.focus();
+    }
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -245,12 +261,14 @@ export function JournalLinesEditor({
                     <TableCell className="cursor-grab text-ink-400"><GripVertical className="h-4 w-4" aria-label={`Drag line ${index + 1}`} /></TableCell>
                     <TableCell className="text-ink-500">{index + 1}</TableCell>
                     <TableCell>
-                      <AccountPicker
-                        accounts={accounts}
-                        value={line.accountId}
-                        onChange={(accountId) => updateLine(line.key, { accountId, accountSource: "USER" })}
-                        disabled={disabled}
-                      />
+                      <div id={`journal-line-${line.key}-accountId`} tabIndex={-1}>
+                        <AccountPicker
+                          accounts={accounts}
+                          value={line.accountId}
+                          onChange={(accountId) => updateLine(line.key, { accountId, accountSource: "USER" })}
+                          disabled={disabled}
+                        />
+                      </div>
                       <span className="text-[10px] text-ink-400">{line.accountSource === "AI" ? "AI Suggested Account" : "User Changed Account"}</span>
                     </TableCell>
                     <TableCell>
@@ -284,6 +302,7 @@ export function JournalLinesEditor({
                     </TableCell>
                     <TableCell>
                       <Input
+                        id={`journal-line-${line.key}-debit/credit`}
                         inputMode="decimal"
                         value={line.debit}
                         onChange={(e) => handleDebitChange(line.key, e.target.value)}
@@ -342,6 +361,25 @@ export function JournalLinesEditor({
 
         </div>
       )}
+
+      {findings.length > 0 ? (
+        <div className="rounded-md border border-negative/20 bg-negative/5 p-3">
+          <p className="mb-2 text-sm font-semibold text-ink-900">Findings</p>
+          <div className="space-y-1.5">
+            {findings.map((finding) => (
+              <button
+                key={`${finding.key}-${finding.message}`}
+                type="button"
+                className="block w-full rounded px-2 py-1.5 text-left text-xs text-ink-700 hover:bg-white"
+                onClick={() => focusFinding(finding.key, finding.field)}
+              >
+                <span className="font-semibold text-negative">ERROR · Line {finding.lineNumber}</span>
+                <span className="ml-2 underline">{finding.message}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <JournalEntryBalanceSummary
         totalDebit={totalDebit}

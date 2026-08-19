@@ -370,6 +370,163 @@ export async function validateJournalEntryForReview(
  * the accounting rules remain single-sourced. Posting itself is still a
  * separate later action; this function only validates readiness.
  */
+
+export type JournalValidationSeverity = "INFO" | "WARNING" | "ERROR";
+
+export type JournalValidationFinding = {
+  code: string;
+  severity: JournalValidationSeverity;
+  message: string;
+  lineId?: string;
+  lineNumber?: number;
+  field?: string;
+  source?: string;
+};
+
+export type DraftJournalValidationResult = {
+  journalEntryId: string;
+  totalDebit: Prisma.Decimal;
+  totalCredit: Prisma.Decimal;
+  difference: Prisma.Decimal;
+  isBalanced: boolean;
+  status: "DRAFT" | "NEEDS_REVIEW" | "NOT_BALANCED" | "BALANCED" | "READY_FOR_REVIEW";
+  readyForReview: boolean;
+  findings: JournalValidationFinding[];
+};
+
+/**
+ * Phase 5A-7 deterministic validation engine.
+ *
+ * All monetary arithmetic is Prisma.Decimal-based and all ownership is
+ * resolved from the authenticated organization -> company -> journal entry
+ * chain. OpenAI is deliberately not involved.
+ */
+export async function validateDraftJournalEntry(
+  organizationId: string,
+  journalEntryId: string
+): Promise<DraftJournalValidationResult | null> {
+  const entry = await getOwnedJournalEntryById(organizationId, journalEntryId);
+  if (!entry) return null;
+
+  const findings: JournalValidationFinding[] = [];
+  const add = (finding: JournalValidationFinding) => findings.push(finding);
+
+  if (!entry.entryDate || Number.isNaN(entry.entryDate.getTime())) {
+    add({ code: "MISSING_JOURNAL_DATE", severity: "ERROR", message: "Journal date is missing or invalid.", field: "entryDate" });
+  }
+
+  const fiscalYear = await getOwnedFiscalYear(organizationId, entry.companyId, entry.fiscalYearId);
+  if (!fiscalYear || fiscalYear.companyId !== entry.companyId) {
+    add({ code: "INVALID_FISCAL_YEAR", severity: "ERROR", message: "Fiscal year is not valid for this company.", field: "fiscalYearId" });
+  }
+
+  const accountingPeriod = await getOwnedAccountingPeriod(organizationId, entry.companyId, entry.accountingPeriodId);
+  if (!accountingPeriod || accountingPeriod.companyId !== entry.companyId || (fiscalYear && accountingPeriod.fiscalYearId !== fiscalYear.id)) {
+    add({ code: "INVALID_ACCOUNTING_PERIOD", severity: "ERROR", message: "Accounting period is not valid for this company or fiscal year.", field: "accountingPeriodId" });
+  } else if (fiscalYear) {
+    const dateCheck = validateEntryDateInPeriod(fiscalYear, accountingPeriod, entry.entryDate);
+    if (!dateCheck.ok) {
+      add({ code: "DATE_OUTSIDE_PERIOD", severity: "ERROR", message: dateCheck.error, field: "entryDate" });
+    }
+  }
+
+  if (!entry.companyId) {
+    add({ code: "MISSING_COMPANY", severity: "ERROR", message: "Company is missing.", field: "companyId" });
+  }
+
+  if (entry.lines.length === 0) {
+    add({ code: "NO_LINES", severity: "ERROR", message: "Journal has no lines." });
+  } else if (entry.lines.length === 1) {
+    add({ code: "ONE_LINE", severity: "ERROR", message: "Journal has only one line.", lineId: entry.lines[0].id, lineNumber: 1 });
+  }
+
+  for (const [index, line] of entry.lines.entries()) {
+    const lineNumber = index + 1;
+    let debit: Prisma.Decimal;
+    let credit: Prisma.Decimal;
+    try {
+      debit = new Prisma.Decimal(line.debit);
+      credit = new Prisma.Decimal(line.credit);
+    } catch {
+      add({ code: "INVALID_AMOUNT", severity: "ERROR", message: "Debit or Credit amount is invalid.", lineId: line.id, lineNumber, field: "amounts" });
+      continue;
+    }
+
+    if (debit.isNegative() || credit.isNegative()) {
+      add({ code: "NEGATIVE_AMOUNT", severity: "ERROR", message: "Amount cannot be negative.", lineId: line.id, lineNumber, field: "debit/credit" });
+    }
+    if (!debit.isZero() && !credit.isZero()) {
+      add({ code: "BOTH_SIDES", severity: "ERROR", message: "Debit and Credit cannot both contain values.", lineId: line.id, lineNumber, field: "debit/credit" });
+    }
+    if (debit.isZero() && credit.isZero()) {
+      add({ code: "MISSING_AMOUNT", severity: "ERROR", message: "Debit or Credit amount is required.", lineId: line.id, lineNumber, field: "debit/credit" });
+    }
+
+    const account = await getOwnedAccount(organizationId, entry.companyId, line.accountId);
+    if (!account) {
+      add({ code: "MISSING_OR_INVALID_ACCOUNT", severity: "ERROR", message: "Account is missing or does not belong to this company.", lineId: line.id, lineNumber, field: "accountId" });
+    } else if (!account.isActive) {
+      add({ code: "INACTIVE_ACCOUNT", severity: "ERROR", message: "Account is inactive.", lineId: line.id, lineNumber, field: "accountId" });
+    }
+
+    if (entry.sourceType === "AI" && line.accountSource === "USER") {
+      add({
+        code: "ACCOUNT_MAPPING_MANUALLY_CHANGED",
+        severity: "WARNING",
+        message: "AI account suggestion was manually changed.",
+        lineId: line.id,
+        lineNumber,
+        field: "accountId",
+        source: "AI account suggestion",
+      });
+    }
+
+    if (line.taxCodeId) {
+      const taxCode = await getOwnedTaxCode(organizationId, entry.companyId, line.taxCodeId);
+      if (!taxCode) {
+        add({ code: "INVALID_TAX_CODE", severity: "ERROR", message: "Tax code is invalid for this company.", lineId: line.id, lineNumber, field: "taxCodeId" });
+      } else if (!taxCode.isActive) {
+        add({ code: "INACTIVE_TAX_CODE", severity: "WARNING", message: "Tax code is inactive.", lineId: line.id, lineNumber, field: "taxCodeId" });
+      }
+    }
+  }
+
+  // Company currency is mandatory in the existing Company model. There is no
+  // JournalEntry currency field in this phase, so no unsupported currency
+  // finding is fabricated here.
+  const totals = calculateEntryTotals(entry.lines);
+  const difference = totals.totalDebit.minus(totals.totalCredit);
+  const isBalanced = difference.equals(0);
+
+  if (!isBalanced) {
+    add({
+      code: "UNBALANCED",
+      severity: "ERROR",
+      message: `Journal is out of balance by ${difference.abs().toFixed(4)}.`,
+      field: "balance",
+    });
+  }
+
+  const hasErrors = findings.some((finding) => finding.severity === "ERROR");
+  const readyForReview = !hasErrors && isBalanced;
+  const status: DraftJournalValidationResult["status"] =
+    !isBalanced ? "NOT_BALANCED" :
+    hasErrors ? "NEEDS_REVIEW" :
+    readyForReview ? "READY_FOR_REVIEW" :
+    "BALANCED";
+
+  return {
+    journalEntryId: entry.id,
+    totalDebit: totals.totalDebit,
+    totalCredit: totals.totalCredit,
+    difference,
+    isBalanced,
+    status,
+    readyForReview,
+    findings,
+  };
+}
+
 export async function validateJournalEntryForPosting(
   organizationId: string,
   journalEntryId: string
@@ -1382,6 +1539,11 @@ export async function reorderJournalEntryLine(
     journalEntryLineId,
     direction,
   }, existing.sourceDocumentId);
+
+  // Re-run the deterministic engine after a persisted order change. Line
+  // order does not alter debit/credit/account values, but the draft must
+  // still have a current validation result before the next review step.
+  await validateDraftJournalEntry(organizationId, result.id);
 
   return { ok: true, entry: result };
 }
