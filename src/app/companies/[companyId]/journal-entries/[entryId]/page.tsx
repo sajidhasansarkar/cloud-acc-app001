@@ -131,11 +131,6 @@ export default async function JournalEntryDetailPage({
                 journalEntryId={entry.id}
                 entryNumber={entry.entryNumber}
                 status={entry.status}
-                version={entry.version}
-                totalDebit={reviewValidation.totalDebit.toFixed(4)}
-                totalCredit={reviewValidation.totalCredit.toFixed(4)}
-                difference={reviewValidation.difference.toFixed(4)}
-                blockingErrors={draftValidation?.findings.filter((finding) => finding.severity === "ERROR").map((finding) => finding.message) ?? reviewErrors}
               />
             ) : null}
           </div>
