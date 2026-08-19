@@ -207,7 +207,6 @@ export function JournalEntryForm({
               accountingPeriodId,
               entryNumber: entryNumber.trim(),
               entryDate,
-              expectedVersion: entry.version,
               reference: reference.trim() || undefined,
               description: description.trim() || undefined,
               label: label.trim() || undefined,
