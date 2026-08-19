@@ -181,6 +181,9 @@ export default async function CompanyJournalEntriesPage({
           <p className="text-sm text-ink-500">Manual and automated journal entries for {company.displayName}.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {canManage ? (
+            <Link href={`${basePath}/drafts`} className={buttonVariants({ variant: "outline" })}>Drafts</Link>
+          ) : null}
           {canReviewJournalEntries(role) ? (
             <Link href={`${basePath}/ready-for-posting`} className={buttonVariants({ variant: "outline" })}>
               Ready for Posting

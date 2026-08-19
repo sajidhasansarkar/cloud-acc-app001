@@ -241,6 +241,7 @@ const decimalAmountSchema = z
   });
 
 export const journalEntryLineSchema = z.object({
+  lineId: optionalId,
   accountId: z.string().trim().min(1, "Account is required"),
   taxCodeId: optionalId,
   description: optionalTrimmed(500),
@@ -318,6 +319,7 @@ export type UpdateJournalEntryHeaderInput = z.infer<typeof updateJournalEntryHea
 // ways depending on whether it came from New or Edit). Still no
 // `entryNumber`, since it's still not editable (spec section 10).
 export const updateJournalEntryWithLinesSchema = updateJournalEntryHeaderSchema.extend({
+  expectedVersion: z.coerce.number().int().positive().optional(),
   lines: z.array(journalEntryLineSchema).default([]),
 });
 export type UpdateJournalEntryWithLinesInput = z.infer<typeof updateJournalEntryWithLinesSchema>;

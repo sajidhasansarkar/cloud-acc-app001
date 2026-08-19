@@ -109,7 +109,7 @@ export async function getSourceAIDraftReconciliation(
         take: 1,
         include: {
           lines: {
-            orderBy: { lineNumber: "asc" },
+            orderBy: { lineOrder: "asc" },
             include: { account: { select: { id: true, code: true, name: true, isActive: true } } },
           },
           fiscalYear: { select: { id: true, name: true, startDate: true, endDate: true } },

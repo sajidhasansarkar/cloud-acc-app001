@@ -23,7 +23,7 @@ export type NormalizedDocumentContent = {
   pages: Array<{
     pageNumber: number;
     text: string;
-    textBlocks: Array<{ text: string; lineNumber: number }>;
+    textBlocks: Array<{ text: string; lineOrder: number }>;
     tables: ExtractedTable[];
     dateCandidates: string[];
     amountCandidates: string[];
@@ -37,7 +37,7 @@ export type NormalizedDocumentContent = {
   tables: ExtractedTable[];
   rows: Array<{ source: string; rowNumber: number; cells: string[] }>;
   columns: Array<{ source: string; index: number; name: string }>;
-  textBlocks: Array<{ source: string; text: string; lineNumber?: number }>;
+  textBlocks: Array<{ source: string; text: string; lineOrder?: number }>;
   metadata: Record<string, unknown>;
   warnings: string[];
 };

@@ -199,7 +199,7 @@ export function ReviewReconciliation({ data }: { data: ReviewData }) {
                     <tbody className="divide-y divide-ink-100">
                       {draft.lines.map((line: any) => (
                         <tr key={line.id}>
-                          <td className="px-2 py-2">{line.lineNumber}</td>
+                          <td className="px-2 py-2">{line.lineOrder}</td>
                           <td className="px-2 py-2">{line.account.code} — {line.account.name}</td>
                           <td className="px-2 py-2">{line.description || "—"}</td>
                           <td className="px-2 py-2 text-right">{line.debit.toString()}</td>

@@ -69,7 +69,7 @@ function lineAmount(line: { debit: Prisma.Decimal; credit: Prisma.Decimal }) {
 
 type GstHstCalculationLine = {
   id: string;
-  lineNumber: number;
+  lineOrder: number;
   debit: Prisma.Decimal;
   credit: Prisma.Decimal;
   account: { id: string; code: string; name: string; type: AccountType };
@@ -320,7 +320,7 @@ export async function calculateGstHstReturn(
     },
     select: {
       id: true,
-      lineNumber: true,
+      lineOrder: true,
       debit: true,
       credit: true,
       account: { select: { id: true, code: true, name: true, type: true } },
@@ -344,7 +344,7 @@ export async function calculateGstHstReturn(
         },
       },
     },
-    orderBy: [{ journalEntry: { entryDate: "asc" } }, { lineNumber: "asc" }],
+    orderBy: [{ journalEntry: { entryDate: "asc" } }, { lineOrder: "asc" }],
   });
 
   const totals = calculateGstHstTotals(lines);

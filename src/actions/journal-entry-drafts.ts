@@ -5,6 +5,8 @@ import { requireActiveOrganization } from "@/lib/session";
 import { canManageJournalEntries } from "@/lib/rbac";
 import {
   createDraftJournalEntryFromSuggestion,
+  createDraftJournalEntryFromTransaction,
+  regenerateDraftJournalEntryFromTransaction,
   type CreateDraftFromSuggestionResult,
 } from "@/accounting/journal-entry-drafts";
 
@@ -44,5 +46,35 @@ export async function createDraftJournalEntryFromSuggestionAction(
     revalidatePath(`/companies/${companyId}/journal-entries/${result.entry.id}`);
   }
 
+  return result;
+}
+
+/** Phase 5A-6: generate a Draft Journal Entry from an approved normalized transaction + account mapping. */
+export async function createDraftJournalEntryFromTransactionAction(
+  transactionId: string,
+  confirmedDate?: string
+) {
+  const { role, user, organization } = await requireActiveOrganization();
+  if (!canManageJournalEntries(role)) {
+    return { ok: false as const, error: "You don't have permission to manage journal entries.", code: "VALIDATION_ERROR" as const };
+  }
+  const result = await createDraftJournalEntryFromTransaction(organization.id, user.id, transactionId, confirmedDate);
+  if (result.ok) {
+    revalidatePath(`/companies/${result.entry.companyId}/journal-entries`);
+    revalidatePath(`/companies/${result.entry.companyId}/journal-entries/${result.entry.id}`);
+  }
+  return result;
+}
+
+export async function regenerateDraftJournalEntryAction(journalEntryId: string, force = false) {
+  const { role, user, organization } = await requireActiveOrganization();
+  if (!canManageJournalEntries(role)) {
+    return { ok: false as const, error: "You don't have permission to manage journal entries.", code: "VALIDATION_ERROR" as const };
+  }
+  const result = await regenerateDraftJournalEntryFromTransaction(organization.id, user.id, journalEntryId, force);
+  if (result.ok) {
+    revalidatePath(`/companies/${result.entry.companyId}/journal-entries`);
+    revalidatePath(`/companies/${result.entry.companyId}/journal-entries/${result.entry.id}`);
+  }
   return result;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -31,6 +31,7 @@ type JournalEntryFormEntry = {
   description: string | null;
   label: string | null;
   sourceType: JournalEntrySourceType;
+  version: number;
 };
 
 export function JournalEntryForm({
@@ -43,6 +44,7 @@ export function JournalEntryForm({
   defaultAccountingPeriodId,
   cancelHref,
   accounts,
+  taxCodes = [],
   initialLines,
 }: {
   mode: "create" | "edit";
@@ -60,7 +62,8 @@ export function JournalEntryForm({
   cancelHref: string;
   /** This company's Chart of Accounts (spec sections 3-4) — reused as-is
    * from listAccounts/listAccountsAction, never redefined here. */
-  accounts: Pick<Account, "id" | "code" | "name" | "isActive">[];
+  accounts: Pick<Account, "id" | "code" | "name" | "type" | "isActive">[];
+  taxCodes?: { id: string; code: string; name: string; isActive: boolean }[];
   /** Existing lines when editing a draft (spec section 15), already
    * converted to string debit/credit so no Decimal/float parsing happens
    * client-side. Omitted (or empty) for a brand-new entry. */
@@ -86,6 +89,26 @@ export function JournalEntryForm({
   const [sourceType, setSourceType] = useState<JournalEntrySourceType>(entry?.sourceType ?? "MANUAL");
   const [lines, setLines] = useState<JournalLineDraft[]>(initialLines ?? []);
   const [error, setError] = useState<string | null>(null);
+  const initialSnapshot = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (initialSnapshot.current === null) {
+      initialSnapshot.current = JSON.stringify({ entryDate, fiscalYearId, accountingPeriodId, reference, description, label, sourceType, lines });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mode !== "edit" || initialSnapshot.current === null) return;
+    const current = JSON.stringify({ entryDate, fiscalYearId, accountingPeriodId, reference, description, label, sourceType, lines });
+    const dirty = current !== initialSnapshot.current;
+    const handler = (event: BeforeUnloadEvent) => {
+      if (!dirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [mode, entryDate, fiscalYearId, accountingPeriodId, reference, description, label, sourceType, lines]);
 
   // Accounting Period options must always belong to the selected Fiscal
   // Year (spec section 6/13) — refetch from the server (never trust a
@@ -109,6 +132,18 @@ export function JournalEntryForm({
     });
   }
 
+  function hasUnsavedChanges() {
+    if (initialSnapshot.current === null) return false;
+    return JSON.stringify({ entryDate, fiscalYearId, accountingPeriodId, reference, description, label, sourceType, lines }) !== initialSnapshot.current;
+  }
+
+  function handleCancel(e: React.MouseEvent<HTMLAnchorElement>) {
+    if (hasUnsavedChanges()) {
+      const leave = window.confirm("You have unsaved changes. Select OK to Leave or Cancel to Stay.");
+      if (!leave) e.preventDefault();
+    }
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -119,6 +154,10 @@ export function JournalEntryForm({
     }
     if (!entryDate || !fiscalYearId || !accountingPeriodId) {
       setError("Entry date, fiscal year, and accounting period are required.");
+      return;
+    }
+    if (mode === "create" && lines.length < 1) {
+      setError("At least one journal line is required.");
       return;
     }
 
@@ -138,7 +177,9 @@ export function JournalEntryForm({
           line.credit.trim()
       )
       .map((line) => ({
+        lineId: line.lineId,
         accountId: line.accountId,
+        taxCodeId: line.taxCodeId || undefined,
         description: line.description.trim() || undefined,
         reference: line.reference.trim() || undefined,
         debit: line.debit.trim() || "0",
@@ -153,10 +194,11 @@ export function JournalEntryForm({
               fiscalYearId,
               accountingPeriodId,
               entryDate,
+              expectedVersion: entry.version,
               reference: reference.trim() || undefined,
               description: description.trim() || undefined,
               label: label.trim() || undefined,
-              sourceType,
+              sourceType: "MANUAL",
               lines: linesPayload,
             })
           : await createJournalEntryAction({
@@ -165,6 +207,7 @@ export function JournalEntryForm({
               accountingPeriodId,
               entryNumber: entryNumber.trim(),
               entryDate,
+              expectedVersion: entry.version,
               reference: reference.trim() || undefined,
               description: description.trim() || undefined,
               label: label.trim() || undefined,
@@ -290,41 +333,31 @@ export function JournalEntryForm({
         />
       </div>
 
+      {mode === "create" ? (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label htmlFor="label">Label</Label>
-          <Input
-            id="label"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="Optional tag"
-          />
+          <div className="space-y-1.5">
+            <Label htmlFor="label">Label</Label>
+            <Input
+              id="label"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="Optional tag"
+            />
+          </div>
+
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="sourceType">Source Type</Label>
-          <Select
-            id="sourceType"
-            value={sourceType}
-            onChange={(e) => setSourceType(e.target.value as JournalEntrySourceType)}
-          >
-            {JOURNAL_ENTRY_SOURCE_TYPES.map((type) => (
-              <option key={type} value={type}>
-                {JOURNAL_ENTRY_SOURCE_TYPE_LABELS[type]}
-              </option>
-            ))}
-          </Select>
-        </div>
-      </div>
+  
+        ) : null}
 
       <div className="border-t border-ink-100 pt-6">
-        <JournalLinesEditor accounts={accounts} lines={lines} onChange={setLines} disabled={isPending} />
+        <JournalLinesEditor accounts={accounts} taxCodes={taxCodes} lines={lines} onChange={setLines} disabled={isPending} />
       </div>
 
       <div className="flex items-center gap-3 border-t border-ink-100 pt-6">
         <Button type="submit" variant="primary" disabled={isPending}>
           {isPending ? "Saving…" : mode === "edit" ? "Save Changes" : "Save Draft"}
         </Button>
-        <a href={cancelHref} className="text-sm text-ink-500 hover:text-ink-800">
+        <a href={cancelHref} onClick={handleCancel} className="text-sm text-ink-500 hover:text-ink-800">
           Cancel
         </a>
       </div>

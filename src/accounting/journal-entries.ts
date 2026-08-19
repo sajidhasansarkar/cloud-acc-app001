@@ -11,6 +11,23 @@ import {
 } from "./access";
 import { getOwnedTaxCode } from "@/tax/access";
 
+async function recordJournalAudit(
+  organizationId: string,
+  companyId: string,
+  userId: string,
+  action: string,
+  details: Prisma.InputJsonValue,
+  documentId?: string | null
+) {
+  try {
+    await prisma.documentAuditEvent.create({
+      data: { organizationId, companyId, userId, documentId: documentId ?? null, action, details },
+    });
+  } catch (error) {
+    console.error("Journal audit failed", error);
+  }
+}
+
 /**
  * Journal Entry database foundation (Phase 4A-1).
  *
@@ -29,12 +46,19 @@ export type JournalEntryResult =
   | { ok: false; error: string };
 
 export type JournalEntryLineInput = {
+  lineId?: string;
   accountId: string;
   taxCodeId?: string;
   description?: string;
   reference?: string;
   debit: Prisma.Decimal.Value;
   credit: Prisma.Decimal.Value;
+  accountSource?: "AI" | "USER";
+  descriptionSource?: "AI" | "USER";
+  debitSource?: "AI" | "USER";
+  creditSource?: "AI" | "USER";
+  taxCodeSource?: "AI" | "USER";
+  referenceSource?: "AI" | "USER";
 };
 
 export type CreateJournalEntryInput = {
@@ -148,7 +172,7 @@ export async function validateJournalEntryBalance(journalEntryId: string): Promi
   const lines = await prisma.journalEntryLine.findMany({
     where: { journalEntryId },
     select: { debit: true, credit: true },
-    orderBy: { lineNumber: "asc" },
+    orderBy: { lineOrder: "asc" },
   });
 
   const { totalDebit, totalCredit } = calculateEntryTotals(lines);
@@ -487,17 +511,31 @@ export async function createJournalEntry(
       lines: {
         create: input.lines.map((line, index) => ({
           accountId: line.accountId,
+          accountSource: line.accountSource ?? "USER",
+          descriptionSource: line.descriptionSource ?? "USER",
+          debitSource: line.debitSource ?? "USER",
+          creditSource: line.creditSource ?? "USER",
+          taxCodeSource: line.taxCodeSource ?? "USER",
+          referenceSource: line.referenceSource ?? "USER",
           taxCodeId: line.taxCodeId ?? null,
           description: line.description?.trim() || null,
           reference: line.reference?.trim() || null,
           debit: line.debit,
           credit: line.credit,
-          lineNumber: index + 1,
+          lineOrder: index + 1,
         })),
       },
     },
     include: { lines: true },
   });
+
+  await recordJournalAudit(organizationId, company.id, createdById, "DRAFT_JOURNAL_CREATED", {
+    journalEntryId: entry.id,
+    entryNumber: entry.entryNumber,
+    sourceType: entry.sourceType,
+    sourceTransactionId: input.transactionCandidateId ?? null,
+    sourceDocumentId: input.sourceDocumentId ?? null,
+  }, input.sourceDocumentId);
 
   return { ok: true, entry };
 }
@@ -989,6 +1027,7 @@ export async function updateJournalEntryHeader(
 // ------------------------------
 
 export type UpdateJournalEntryWithLinesInput = UpdateJournalEntryHeaderInput & {
+  expectedVersion?: number;
   lines: JournalEntryLineInput[];
 };
 
@@ -1001,7 +1040,7 @@ export type UpdateJournalEntryWithLinesInput = UpdateJournalEntryHeaderInput & {
  * Only DRAFT entries may be edited (spec section 15). Lines are replaced
  * wholesale (delete all, recreate in order) rather than diffed line by
  * line — simpler and correct here because journal lines have no identity
- * meaningful outside their parent entry, and lineNumber is always
+ * meaningful outside their parent entry, and lineOrder is always
  * recomputed from the submitted order anyway.
  *
  * Does not require the lines to be balanced or complete — same reasoning
@@ -1057,6 +1096,8 @@ export async function updateJournalEntry(
         status: true,
         transactionCandidateId: true,
         aiSuggestionId: true,
+        version: true,
+        lines: { orderBy: { lineOrder: "asc" } },
       },
     });
 
@@ -1065,6 +1106,9 @@ export async function updateJournalEntry(
     }
     if (current.status !== "DRAFT") {
       throw new Error("JOURNAL_ENTRY_NOT_EDITABLE");
+    }
+    if (input.expectedVersion !== undefined && current.version !== input.expectedVersion) {
+      throw new Error("JOURNAL_ENTRY_CONCURRENT_UPDATE");
     }
 
     await tx.journalEntry.update({
@@ -1077,6 +1121,7 @@ export async function updateJournalEntry(
         description: input.description?.trim() || null,
         label: input.label?.trim() || null,
         sourceType: input.sourceType ?? existing.sourceType,
+        version: { increment: 1 },
       },
     });
 
@@ -1114,17 +1159,31 @@ export async function updateJournalEntry(
     }
 
     if (input.lines.length > 0) {
+      const existingById = new Map(current.lines.map((line) => [line.id, line]));
       await tx.journalEntryLine.createMany({
-        data: input.lines.map((line, index) => ({
-          journalEntryId: existing.id,
-          accountId: line.accountId,
-          taxCodeId: line.taxCodeId ?? null,
-          description: line.description?.trim() || null,
-          reference: line.reference?.trim() || null,
-          debit: line.debit,
-          credit: line.credit,
-          lineNumber: index + 1,
-        })),
+        data: input.lines.map((line, index) => {
+          const prior = line.lineId ? existingById.get(line.lineId) : undefined;
+          const description = line.description?.trim() || null;
+          const reference = line.reference?.trim() || null;
+          const debit = new Prisma.Decimal(line.debit);
+          const credit = new Prisma.Decimal(line.credit);
+          return {
+            journalEntryId: existing.id,
+            accountId: line.accountId,
+            taxCodeId: line.taxCodeId ?? null,
+            description,
+            reference,
+            debit,
+            credit,
+            lineOrder: index + 1,
+            accountSource: prior && prior.accountId === line.accountId ? prior.accountSource : "USER",
+            descriptionSource: prior && (prior.description ?? null) === description ? prior.descriptionSource : "USER",
+            debitSource: prior && prior.debit.eq(debit) ? prior.debitSource : "USER",
+            creditSource: prior && prior.credit.eq(credit) ? prior.creditSource : "USER",
+            taxCodeSource: prior && (prior.taxCodeId ?? null) === (line.taxCodeId ?? null) ? prior.taxCodeSource : "USER",
+            referenceSource: prior && (prior.reference ?? null) === reference ? prior.referenceSource : "USER",
+          };
+        }),
       });
     }
 
@@ -1133,20 +1192,41 @@ export async function updateJournalEntry(
       include: { lines: true },
     });
   }).catch((error: unknown) => {
-    if (error instanceof Error && error.message === "JOURNAL_ENTRY_NOT_FOUND") {
-      return null;
-    }
-    if (error instanceof Error && error.message === "JOURNAL_ENTRY_NOT_EDITABLE") {
-      return null;
+    if (error instanceof Error && (error.message === "JOURNAL_ENTRY_NOT_FOUND" || error.message === "JOURNAL_ENTRY_NOT_EDITABLE" || error.message === "JOURNAL_ENTRY_CONCURRENT_UPDATE")) {
+      return { errorCode: error.message };
     }
     throw error;
   });
 
-  if (!entry) {
+  if (!entry || "errorCode" in entry) {
+    if (entry?.errorCode === "JOURNAL_ENTRY_CONCURRENT_UPDATE") {
+      return { ok: false, error: "This draft was changed elsewhere. Reload the latest draft before saving your changes." };
+    }
     const latest = await getOwnedJournalEntryById(organizationId, journalEntryId);
     if (!latest) return { ok: false, error: "Journal entry not found." };
     return { ok: false, error: `A ${latest.status} journal entry cannot be edited.` };
   }
+
+  const auditUserId = userId ?? existing.createdById;
+  await recordJournalAudit(organizationId, companyId, auditUserId, "DRAFT_JOURNAL_UPDATED", {
+    journalEntryId: entry.id,
+    version: (entry as typeof entry & { version?: number }).version ?? null,
+    lineCount: input.lines.length,
+  }, existing.sourceDocumentId);
+
+  const previousIds = new Set(existing.lines.map((line) => line.id));
+  const retainedIds = new Set(input.lines.map((line) => line.lineId).filter(Boolean) as string[]);
+  const added = input.lines.filter((line) => !line.lineId).length;
+  const deleted = [...previousIds].filter((id) => !retainedIds.has(id)).length;
+  const updated = input.lines.filter((line) => {
+    if (!line.lineId) return false;
+    const prior = existing.lines.find((item) => item.id === line.lineId);
+    if (!prior) return false;
+    return prior.accountId !== line.accountId || (prior.description ?? "") !== (line.description ?? "") || (prior.reference ?? "") !== (line.reference ?? "") || !prior.debit.eq(line.debit) || !prior.credit.eq(line.credit) || (prior.taxCodeId ?? "") !== (line.taxCodeId ?? "");
+  }).length;
+  if (added) await recordJournalAudit(organizationId, companyId, auditUserId, "DRAFT_JOURNAL_LINE_ADDED", { journalEntryId: entry.id, count: added }, existing.sourceDocumentId);
+  if (updated) await recordJournalAudit(organizationId, companyId, auditUserId, "DRAFT_JOURNAL_LINE_UPDATED", { journalEntryId: entry.id, count: updated }, existing.sourceDocumentId);
+  if (deleted) await recordJournalAudit(organizationId, companyId, auditUserId, "DRAFT_JOURNAL_LINE_DELETED", { journalEntryId: entry.id, count: deleted }, existing.sourceDocumentId);
 
   return { ok: true, entry };
 }
@@ -1160,7 +1240,7 @@ export type JournalLineMoveDirection = "UP" | "DOWN";
 
 /**
  * Moves one persisted journal line within a DRAFT entry without deleting or
- * recreating the line. The two affected rows exchange their lineNumber
+ * recreating the line. The two affected rows exchange their lineOrder
  * values inside one transaction, so the JournalEntryLine ids remain stable.
  * The transaction also re-checks organization/company ownership and DRAFT
  * status so a stale UI cannot mutate a POSTED/VOID entry.
@@ -1181,8 +1261,8 @@ export async function reorderJournalEntryLine(
   const currentLine = existing.lines.find((line) => line.id === journalEntryLineId);
   if (!currentLine) return { ok: false, error: "Journal line not found." };
 
-  const targetLineNumber = direction === "UP" ? currentLine.lineNumber - 1 : currentLine.lineNumber + 1;
-  const targetLine = existing.lines.find((line) => line.lineNumber === targetLineNumber);
+  const targetLineNumber = direction === "UP" ? currentLine.lineOrder - 1 : currentLine.lineOrder + 1;
+  const targetLine = existing.lines.find((line) => line.lineOrder === targetLineNumber);
   if (!targetLine) {
     return { ok: false, error: direction === "UP" ? "This line is already first." : "This line is already last." };
   }
@@ -1200,8 +1280,8 @@ export async function reorderJournalEntryLine(
 
     const lines = await tx.journalEntryLine.findMany({
       where: { journalEntryId: current.id },
-      select: { id: true, lineNumber: true },
-      orderBy: { lineNumber: "asc" },
+      select: { id: true, lineOrder: true },
+      orderBy: { lineOrder: "asc" },
     });
     const index = lines.findIndex((line) => line.id === journalEntryLineId);
     if (index === -1) throw new Error("JOURNAL_LINE_NOT_FOUND");
@@ -1212,19 +1292,19 @@ export async function reorderJournalEntryLine(
     const currentDbLine = lines[index];
     const targetDbLine = lines[targetIndex];
 
-    // No unique constraint exists on lineNumber, but a temporary value keeps
+    // No unique constraint exists on lineOrder, but a temporary value keeps
     // the swap safe even if a future schema adds one.
     await tx.journalEntryLine.update({
       where: { id: currentDbLine.id },
-      data: { lineNumber: 0 },
+      data: { lineOrder: 0 },
     });
     await tx.journalEntryLine.update({
       where: { id: targetDbLine.id },
-      data: { lineNumber: currentDbLine.lineNumber },
+      data: { lineOrder: currentDbLine.lineOrder },
     });
     await tx.journalEntryLine.update({
       where: { id: currentDbLine.id },
-      data: { lineNumber: targetDbLine.lineNumber },
+      data: { lineOrder: targetDbLine.lineOrder },
     });
 
     // Normalize every line number from the persisted order. This guarantees
@@ -1232,11 +1312,12 @@ export async function reorderJournalEntryLine(
     const normalized = await tx.journalEntryLine.findMany({
       where: { journalEntryId: current.id },
       select: { id: true },
-      orderBy: { lineNumber: "asc" },
+      orderBy: { lineOrder: "asc" },
     });
     for (let i = 0; i < normalized.length; i += 1) {
-      await tx.journalEntryLine.update({ where: { id: normalized[i].id }, data: { lineNumber: i + 1 } });
+      await tx.journalEntryLine.update({ where: { id: normalized[i].id }, data: { lineOrder: i + 1 } });
     }
+    await tx.journalEntry.update({ where: { id: current.id }, data: { version: { increment: 1 } } });
 
     if (current.transactionCandidateId && userId) {
       const review = await tx.aIReviewRecord.findUnique({
@@ -1280,6 +1361,7 @@ export async function reorderJournalEntryLine(
       JOURNAL_ENTRY_POSTED: "Posted journal entries are locked.",
       JOURNAL_ENTRY_VOID: "Void journal entries cannot be modified.",
       JOURNAL_ENTRY_NOT_EDITABLE: "Only DRAFT journal entries can be reordered.",
+      JOURNAL_ENTRY_CONCURRENT_UPDATE: "This draft was changed elsewhere. Reload the latest draft before saving your changes.",
       JOURNAL_LINE_NOT_FOUND: "Journal line not found.",
       JOURNAL_LINE_AT_BOUNDARY: direction === "UP" ? "This line is already first." : "This line is already last.",
     };
@@ -1294,6 +1376,12 @@ export async function reorderJournalEntryLine(
     if (latest.status === "VOID") return { ok: false, error: "Void journal entries cannot be modified." };
     return { ok: false, error: "The journal line could not be reordered." };
   }
+
+  await recordJournalAudit(organizationId, companyId, userId ?? existing.createdById, "DRAFT_JOURNAL_LINE_REORDERED", {
+    journalEntryId: result.id,
+    journalEntryLineId,
+    direction,
+  }, existing.sourceDocumentId);
 
   return { ok: true, entry: result };
 }
@@ -1511,7 +1599,7 @@ export async function postJournalEntry(
           company: { organizationId },
         },
         include: {
-          lines: { include: { account: true }, orderBy: { lineNumber: "asc" } },
+          lines: { include: { account: true }, orderBy: { lineOrder: "asc" } },
           fiscalYear: true,
           accountingPeriod: true,
         },
@@ -1651,7 +1739,7 @@ export async function postJournalEntry(
 
       return tx.journalEntry.findUniqueOrThrow({
         where: { id: current.id },
-        include: { lines: { orderBy: { lineNumber: "asc" } } },
+        include: { lines: { orderBy: { lineOrder: "asc" } } },
       });
     }, {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -1704,7 +1792,8 @@ export const voidJournalEntry = (organizationId: string, companyId: string, jour
 export async function deleteJournalEntry(
   organizationId: string,
   companyId: string,
-  journalEntryId: string
+  journalEntryId: string,
+  userId?: string
 ): Promise<JournalEntryResult> {
   const existing = await getOwnedJournalEntry(organizationId, companyId, journalEntryId);
   if (!existing) {
@@ -1718,5 +1807,10 @@ export async function deleteJournalEntry(
   }
 
   await prisma.journalEntry.delete({ where: { id: existing.id } });
+  await recordJournalAudit(organizationId, companyId, userId ?? existing.createdById, "DRAFT_JOURNAL_DELETED", {
+    journalEntryId: existing.id,
+    entryNumber: existing.entryNumber,
+    sourceTransactionId: existing.transactionCandidateId ?? null,
+  }, existing.sourceDocumentId);
   return { ok: true, entry: existing };
 }

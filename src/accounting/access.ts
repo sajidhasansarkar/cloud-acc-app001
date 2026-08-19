@@ -138,7 +138,7 @@ export async function getOwnedJournalEntryById(
       company: { organizationId },
     },
     include: {
-      lines: { include: { account: true }, orderBy: { lineNumber: "asc" } },
+      lines: { include: { account: true, taxCode: true }, orderBy: { lineOrder: "asc" } },
       fiscalYear: true,
       accountingPeriod: true,
       createdBy: { select: { id: true, name: true } },
@@ -187,7 +187,7 @@ export async function getOwnedJournalEntry(
       // and Journal Entry Details both need account code/name, not just
       // accountId, so the relation is included here rather than every
       // caller re-fetching the Chart of Accounts separately).
-      lines: { include: { account: true }, orderBy: { lineNumber: "asc" } },
+      lines: { include: { account: true, taxCode: true }, orderBy: { lineOrder: "asc" } },
       fiscalYear: true,
       accountingPeriod: true,
       createdBy: { select: { id: true, name: true } },

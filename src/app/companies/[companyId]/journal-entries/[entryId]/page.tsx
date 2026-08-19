@@ -13,7 +13,7 @@ import { JournalEntryBalanceSummary } from "@/components/journal-entries/journal
 import { JournalEntryDeleteAction } from "@/components/journal-entries/journal-entry-delete-action";
 import { JournalEntryLinesManager } from "@/components/journal-entries/journal-entry-lines-manager";
 import { JournalEntryReviewActions } from "@/components/journal-entries/journal-entry-review-actions";
-import { JournalEntryPostAction } from "@/components/journal-entries/journal-entry-post-action";
+import { DraftJournalRegenerateAction } from "@/components/journal-entries/draft-journal-regenerate-action";
 import { JournalEntryValidationSummary } from "@/components/journal-entries/journal-entry-validation-summary";
 import { JOURNAL_ENTRY_SOURCE_TYPE_LABELS } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
@@ -99,23 +99,14 @@ export default async function JournalEntryDetailPage({
                 Edit
               </Link>
             ) : null}
+            {canManage && entry.status === "DRAFT" && entry.transactionCandidate ? (
+              <DraftJournalRegenerateAction journalEntryId={entry.id} modified={entry.version > 1} />
+            ) : null}
             {canReview && (entry.status === "DRAFT" || entry.status === "IN_REVIEW" || entry.status === "READY_FOR_POSTING") ? (
               <JournalEntryReviewActions
                 companyId={company.id}
                 journalEntryId={entry.id}
                 status={entry.status}
-              />
-            ) : null}
-            {canManage && entry.status === "READY_FOR_POSTING" ? (
-              <JournalEntryPostAction
-                companyId={company.id}
-                journalEntryId={entry.id}
-                entryNumber={entry.entryNumber}
-                entryDate={formatDate(entry.entryDate)}
-                totalDebit={balance.totalDebit.toFixed(4)}
-                totalCredit={balance.totalCredit.toFixed(4)}
-                difference={balance.difference.toFixed(4)}
-                lineCount={entry.lines.length}
               />
             ) : null}
             {canManage && entry.status === "DRAFT" ? (
@@ -202,8 +193,8 @@ export default async function JournalEntryDetailPage({
           <CardHeader>
             <CardTitle>Source Traceability</CardTitle>
             <CardDescription>
-              This Draft Journal Entry was created from a human-accepted AI suggestion. The original AI suggestion is
-              never overwritten — editing this entry only changes the entry itself.
+              This Draft Journal Entry retains its source transaction and source document. AI-originated values remain
+              identifiable after user edits.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -286,6 +277,10 @@ export default async function JournalEntryDetailPage({
                 debit: line.debit.toString(),
                 credit: line.credit.toString(),
                 account: { code: line.account.code, name: line.account.name },
+                taxCode: line.taxCode ? { code: line.taxCode.code, name: line.taxCode.name } : null,
+                accountSource: line.accountSource,
+                debitSource: line.debitSource,
+                creditSource: line.creditSource,
               }))}
             />
           )}

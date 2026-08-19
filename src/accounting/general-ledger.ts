@@ -222,12 +222,12 @@ export async function validateJournalEntryLedgerConsistency(
   for (const line of entry.lines) {
     const row = ledgerByLine.get(line.id);
     if (!row) {
-      errors.push(`Ledger record is missing for Journal Entry line ${line.lineNumber}.`);
+      errors.push(`Ledger record is missing for Journal Entry line ${line.lineOrder}.`);
       continue;
     }
-    if (row.accountId !== line.accountId || line.account.companyId !== entry.companyId) errors.push(`Ledger account does not match Journal Entry line ${line.lineNumber}.`);
-    if (!row.debit.eq(line.debit)) errors.push(`Ledger debit does not match Journal Entry line ${line.lineNumber}.`);
-    if (!row.credit.eq(line.credit)) errors.push(`Ledger credit does not match Journal Entry line ${line.lineNumber}.`);
+    if (row.accountId !== line.accountId || line.account.companyId !== entry.companyId) errors.push(`Ledger account does not match Journal Entry line ${line.lineOrder}.`);
+    if (!row.debit.eq(line.debit)) errors.push(`Ledger debit does not match Journal Entry line ${line.lineOrder}.`);
+    if (!row.credit.eq(line.credit)) errors.push(`Ledger credit does not match Journal Entry line ${line.lineOrder}.`);
   }
 
   return {

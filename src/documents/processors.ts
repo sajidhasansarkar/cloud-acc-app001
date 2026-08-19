@@ -68,7 +68,7 @@ export async function extractPdf(documentId: string, buffer: Buffer) {
     const tableRows = lines.map((line) => line.split(/\t| {2,}/).map(clean)).filter((r) => r.length >= 2);
     const table = tableFromRows(tableRows, { pageNumber: i + 1 }, `pdf-page-${i + 1}-table`);
     const candidates = lineCandidates(lines);
-    const page = { pageNumber: i + 1, text, textBlocks: lines.map((t, index) => ({ text: t, lineNumber: index + 1 })), tables: table ? [table] : [], dateCandidates: candidates.dates, amountCandidates: candidates.amounts };
+    const page = { pageNumber: i + 1, text, textBlocks: lines.map((t, index) => ({ text: t, lineOrder: index + 1 })), tables: table ? [table] : [], dateCandidates: candidates.dates, amountCandidates: candidates.amounts };
     if (table) content.tables.push(table);
     return page;
   });
@@ -92,7 +92,7 @@ export async function extractCsv(documentId: string, buffer: Buffer) {
   if (table) content.tables.push(table);
   content.rows = rows.slice(0, MAX_PREVIEW_ROWS).map((cells, i) => ({ source: "csv", rowNumber: i + 2, cells }));
   content.columns = headers.map((name, index) => ({ source: "csv", index, name: clean(name) }));
-  content.textBlocks = rows.slice(0, 1000).map((r, i) => ({ source: `row:${i + 2}`, text: r.map(clean).join(" | "), lineNumber: i + 2 }));
+  content.textBlocks = rows.slice(0, 1000).map((r, i) => ({ source: `row:${i + 2}`, text: r.map(clean).join(" | "), lineOrder: i + 2 }));
   content.metadata = { delimiter, encoding: "utf-8", headerDetected: headers.length > 0 };
   if (rows.length > MAX_PREVIEW_ROWS) content.warnings.push(`CSV contains ${rows.length.toLocaleString()} rows; preview is limited to ${MAX_PREVIEW_ROWS.toLocaleString()} rows.`);
   const numericValues = rows.flat().map(clean).filter(amountLike).slice(0, 500);
@@ -134,7 +134,7 @@ export async function extractExcel(documentId: string, buffer: Buffer) {
     content.sheets.push(sheetData);
     headers.forEach((header, index) => content.columns.push({ source: `sheet:${name}`, index, name: clean(header) }));
     rows.slice(1, MAX_PREVIEW_ROWS).forEach((row) => content.rows.push({ source: `sheet:${name}`, rowNumber: row.rowNumber, cells: row.cells.map((c) => clean(c.value)) }));
-    rows.slice(0, 1000).forEach((row) => content.textBlocks.push({ source: `sheet:${name}:row:${row.rowNumber}`, text: row.cells.map((c) => clean(c.value)).join(" | "), lineNumber: row.rowNumber }));
+    rows.slice(0, 1000).forEach((row) => content.textBlocks.push({ source: `sheet:${name}:row:${row.rowNumber}`, text: row.cells.map((c) => clean(c.value)).join(" | "), lineOrder: row.rowNumber }));
     columnCount = Math.max(columnCount, range.e.c - range.s.c + 1);
     if (cellCount > MAX_CELLS) break;
   }
@@ -147,7 +147,7 @@ export async function extractImage(documentId: string, buffer: Buffer, mimeType:
   const provider = getOCRProvider();
   try {
     const result = await provider.extract(buffer, mimeType);
-    content.textBlocks = result.lines.map((line, i) => ({ source: "image", text: line.text, lineNumber: i + 1 }));
+    content.textBlocks = result.lines.map((line, i) => ({ source: "image", text: line.text, lineOrder: i + 1 }));
     content.metadata = { ocrProvider: provider.name, lineCount: result.lines.length };
     content.warnings.push(...result.warnings);
     if (!result.text.trim()) content.warnings.push("OCR completed but no readable text was detected.");

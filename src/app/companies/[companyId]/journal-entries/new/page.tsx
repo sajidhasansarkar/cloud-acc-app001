@@ -6,6 +6,7 @@ import { requireOwnedCompany } from "@/lib/company-guard";
 import { listFiscalYears, getCurrentFiscalYear } from "@/accounting/fiscal-years";
 import { listAccountingPeriods, getCurrentAccountingPeriod } from "@/accounting/accounting-periods";
 import { listAccounts } from "@/accounting/accounts";
+import { listTaxCodes } from "@/tax/tax-codes";
 import { canManageJournalEntries } from "@/lib/rbac";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -62,10 +63,11 @@ export default async function NewJournalEntryPage({
     );
   }
 
-  const [currentFiscalYear, currentPeriod, accounts] = await Promise.all([
+  const [currentFiscalYear, currentPeriod, accounts, taxCodes] = await Promise.all([
     getCurrentFiscalYear(organization.id, company.id),
     getCurrentAccountingPeriod(organization.id, company.id),
     listAccounts(organization.id, company.id),
+    listTaxCodes(organization.id, company.id, { isActive: true }),
   ]);
 
   const defaultFiscalYearId = currentFiscalYear?.id ?? fiscalYears[0].id;
@@ -97,6 +99,7 @@ export default async function NewJournalEntryPage({
           defaultAccountingPeriodId={defaultAccountingPeriodId}
           cancelHref={basePath}
           accounts={accounts ?? []}
+          taxCodes={(taxCodes ?? []).map((tax) => ({ id: tax.id, code: tax.code, name: tax.name, isActive: tax.isActive }))}
         />
       </div>
     </div>

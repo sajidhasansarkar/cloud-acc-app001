@@ -29,7 +29,7 @@ export function AccountPicker({
   placeholder = "Select account…",
   invalid,
 }: {
-  accounts: Pick<Account, "id" | "code" | "name" | "isActive">[];
+  accounts: Pick<Account, "id" | "code" | "name" | "type" | "isActive">[];
   value: string;
   onChange: (accountId: string) => void;
   disabled?: boolean;
@@ -48,7 +48,7 @@ export function AccountPicker({
     const q = query.trim().toLowerCase();
     if (!q) return selectable;
     return selectable.filter(
-      (a) => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q)
+      (a) => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q) || a.type.toLowerCase().includes(q)
     );
   }, [selectable, query]);
 
@@ -133,7 +133,7 @@ export function AccountPicker({
                     )}
                   >
                     <span className="font-mono text-xs text-ink-500">{account.code}</span>
-                    <span className="truncate text-ink-800">{account.name}</span>
+                    <span className="truncate text-ink-800">{account.name}</span><span className="text-[10px] text-ink-400">{account.type}</span>
                   </button>
                 </li>
               ))

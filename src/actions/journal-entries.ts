@@ -78,6 +78,10 @@ export async function createJournalEntryAction(input: {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
 
+  if (parsed.data.lines.length < 1) {
+    return { ok: false, error: "At least one journal line is required for a new Draft Journal Entry." };
+  }
+
   const result = await createJournalEntry(organization.id, user.id, parsed.data);
 
   if (result.ok) {
@@ -168,8 +172,11 @@ export async function updateJournalEntryAction(
     description?: string;
     label?: string;
     sourceType?: JournalEntrySourceType;
+    expectedVersion?: number;
     lines: {
+      lineId?: string;
       accountId: string;
+      taxCodeId?: string;
       description?: string;
       reference?: string;
       debit: string | number;
@@ -344,13 +351,13 @@ export async function deleteJournalEntryAction(
   companyId: string,
   journalEntryId: string
 ): Promise<JournalEntryResult> {
-  const { role, organization } = await requireActiveOrganization();
+  const { role, organization, user } = await requireActiveOrganization();
 
   if (!canManageJournalEntries(role)) {
     return { ok: false, error: "You don't have permission to manage journal entries." };
   }
 
-  const result = await deleteJournalEntry(organization.id, companyId, journalEntryId);
+  const result = await deleteJournalEntry(organization.id, companyId, journalEntryId, user.id);
 
   if (result.ok) {
     revalidatePath(`/dashboard/companies/${companyId}`);

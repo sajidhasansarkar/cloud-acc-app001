@@ -16,6 +16,10 @@ type Line = {
   debit: string;
   credit: string;
   account: { code: string; name: string };
+  taxCode?: { code: string; name: string } | null;
+  accountSource: string;
+  debitSource: string;
+  creditSource: string;
 };
 
 export function JournalEntryLinesManager({
@@ -55,6 +59,7 @@ export function JournalEntryLinesManager({
             <TableHead>Account</TableHead>
             <TableHead>Description</TableHead>
             <TableHead>Reference</TableHead>
+            <TableHead>Tax Code</TableHead>
             <TableHead className="text-right">Debit</TableHead>
             <TableHead className="text-right">Credit</TableHead>
             <TableHead className="w-24 text-right">Order</TableHead>
@@ -66,11 +71,13 @@ export function JournalEntryLinesManager({
               <TableCell className="text-ink-500">{index + 1}</TableCell>
               <TableCell className="text-ink-800">
                 <span className="font-mono text-xs text-ink-500">{line.account.code}</span>{" — "}{line.account.name}
+                <div className="text-[10px] text-ink-400">{line.accountSource === "AI" ? "AI Suggested Account" : "User Changed Account"}</div>
               </TableCell>
               <TableCell className="text-ink-700">{line.description || "—"}</TableCell>
               <TableCell className="text-ink-700">{line.reference || "—"}</TableCell>
-              <TableCell className="text-right font-mono text-ink-800">{line.debit}</TableCell>
-              <TableCell className="text-right font-mono text-ink-800">{line.credit}</TableCell>
+              <TableCell className="text-ink-700">{line.taxCode ? `${line.taxCode.code} — ${line.taxCode.name}` : "—"}</TableCell>
+              <TableCell className="text-right font-mono text-ink-800">{line.debit}<div className="text-[10px] text-ink-400">{line.debitSource === "AI" ? "AI Suggested" : "User"}</div></TableCell>
+              <TableCell className="text-right font-mono text-ink-800">{line.credit}<div className="text-[10px] text-ink-400">{line.creditSource === "AI" ? "AI Suggested" : "User"}</div></TableCell>
               <TableCell className="text-right">
                 <div className="flex justify-end gap-1">
                   <Button

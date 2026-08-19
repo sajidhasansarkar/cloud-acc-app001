@@ -173,6 +173,14 @@ enum JournalEntrySourceType {
   OTHER
 }
 
+// Phase 5A-6: field-level provenance for editable draft journal lines.
+// AI values remain visible after generation; user edits switch the affected
+// field to USER rather than erasing the fact that the value was suggested.
+enum JournalFieldSource {
+  AI
+  USER
+}
+
 enum DocumentStatus {
   UPLOADING
   UPLOADED
@@ -1166,6 +1174,8 @@ model JournalEntry {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  // Optimistic concurrency token for draft edits.
+  version Int @default(1)
 
   company          Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
   fiscalYear       FiscalYear       @relation(fields: [fiscalYearId], references: [id])
@@ -1219,6 +1229,14 @@ model JournalEntryLine {
   description String?
   reference   String?
 
+  // Phase 5A-6 field-level AI/user provenance.
+  accountSource     JournalFieldSource @default(USER)
+  descriptionSource JournalFieldSource @default(USER)
+  debitSource       JournalFieldSource @default(USER)
+  creditSource      JournalFieldSource @default(USER)
+  taxCodeSource     JournalFieldSource @default(USER)
+  referenceSource   JournalFieldSource @default(USER)
+
   // Precise fixed-point decimal, never floating-point (spec section 8).
   // Scale of 4 accommodates currencies/rates with sub-cent precision;
   // application code (src/accounting/journal-entries.ts) enforces >= 0
@@ -1230,7 +1248,7 @@ model JournalEntryLine {
   // Explicit display/entry order within the parent JournalEntry (a future
   // UI concern — Phase 4A-3 — but the column belongs here now so line
   // order survives round-trips before that UI exists).
-  lineNumber Int
+  lineOrder Int
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

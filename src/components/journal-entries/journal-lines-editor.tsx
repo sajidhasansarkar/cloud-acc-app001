@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useId } from "react";
-import { ListChecks, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowDownToLine, ArrowUp, GripVertical, ListChecks, Plus, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -34,8 +34,16 @@ export type JournalLineDraft = {
    * add/remove — never sent to the server and unrelated to the eventual
    * JournalEntryLine.id. */
   key: string;
+  lineId?: string;
   accountId: string;
+  taxCodeId: string;
   description: string;
+  accountSource: "AI" | "USER";
+  descriptionSource: "AI" | "USER";
+  debitSource: "AI" | "USER";
+  creditSource: "AI" | "USER";
+  taxCodeSource: "AI" | "USER";
+  referenceSource: "AI" | "USER";
   reference: string;
   /** Raw text as typed — kept as a string end-to-end (never parsed to a
    * JS float) so no floating-point rounding is introduced before the
@@ -51,7 +59,14 @@ export function newJournalLineDraft(): JournalLineDraft {
   return {
     key: `line-${Date.now()}-${keyCounter}`,
     accountId: "",
+    taxCodeId: "",
     description: "",
+    accountSource: "USER",
+    descriptionSource: "USER",
+    debitSource: "USER",
+    creditSource: "USER",
+    taxCodeSource: "USER",
+    referenceSource: "USER",
     reference: "",
     debit: "",
     credit: "",
@@ -77,17 +92,20 @@ function sanitizeAmount(raw: string): string {
 
 export function JournalLinesEditor({
   accounts,
+  taxCodes = [],
   lines,
   onChange,
   disabled,
 }: {
-  accounts: Pick<Account, "id" | "code" | "name" | "isActive">[];
+  accounts: Pick<Account, "id" | "code" | "name" | "type" | "isActive">[];
+  taxCodes?: { id: string; code: string; name: string; isActive: boolean }[];
   lines: JournalLineDraft[];
   onChange: (lines: JournalLineDraft[]) => void;
   disabled?: boolean;
 }) {
   const headingId = useId();
   const [removeKey, setRemoveKey] = React.useState<string | null>(null);
+  const [dragKey, setDragKey] = React.useState<string | null>(null);
 
   function updateLine(key: string, patch: Partial<JournalLineDraft>) {
     onChange(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)));
@@ -96,22 +114,48 @@ export function JournalLinesEditor({
   function handleDebitChange(key: string, raw: string) {
     const value = sanitizeAmount(raw);
     const hasAmount = !isZeroOrEmpty(value);
-    updateLine(key, { debit: value, credit: hasAmount ? "" : lines.find((l) => l.key === key)?.credit ?? "" });
+    updateLine(key, { debit: value, credit: hasAmount ? "" : lines.find((l) => l.key === key)?.credit ?? "", debitSource: "USER", creditSource: hasAmount ? "USER" : lines.find((l) => l.key === key)?.creditSource ?? "USER" });
   }
 
   function handleCreditChange(key: string, raw: string) {
     const value = sanitizeAmount(raw);
     const hasAmount = !isZeroOrEmpty(value);
-    updateLine(key, { credit: value, debit: hasAmount ? "" : lines.find((l) => l.key === key)?.debit ?? "" });
+    updateLine(key, { credit: value, debit: hasAmount ? "" : lines.find((l) => l.key === key)?.debit ?? "", creditSource: "USER", debitSource: hasAmount ? "USER" : lines.find((l) => l.key === key)?.debitSource ?? "USER" });
   }
 
-  function addLine() {
-    onChange([...lines, newJournalLineDraft()]);
+  function addLine(afterKey?: string) {
+    const next = newJournalLineDraft();
+    if (!afterKey) onChange([...lines, next]);
+    else {
+      const index = lines.findIndex((line) => line.key === afterKey);
+      onChange(index < 0 ? [...lines, next] : [...lines.slice(0, index + 1), next, ...lines.slice(index + 1)]);
+    }
+  }
+
+  function moveBefore(targetKey: string) {
+    if (!dragKey || dragKey === targetKey) return;
+    const from = lines.findIndex((line) => line.key === dragKey);
+    const to = lines.findIndex((line) => line.key === targetKey);
+    if (from < 0 || to < 0) return;
+    const next = [...lines];
+    const [moved] = next.splice(from, 1);
+    next.splice(to > from ? to - 1 : to, 0, moved);
+    onChange(next);
+    setDragKey(null);
   }
 
   function removeLine(key: string) {
     onChange(lines.filter((line) => line.key !== key));
     setRemoveKey(null);
+  }
+
+  function moveByIndex(index: number, delta: -1 | 1) {
+    const target = index + delta;
+    if (target < 0 || target >= lines.length) return;
+    const next = [...lines];
+    const [moved] = next.splice(index, 1);
+    next.splice(target, 0, moved);
+    onChange(next);
   }
 
   const totalDebit = sumDecimalStrings(lines.map((l) => l.debit));
@@ -178,10 +222,11 @@ export function JournalLinesEditor({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-10">#</TableHead>
+                <TableHead className="w-10">↕</TableHead><TableHead className="w-10">#</TableHead>
                 <TableHead className="min-w-[220px]">Account</TableHead>
                 <TableHead className="min-w-[160px]">Description</TableHead>
                 <TableHead className="min-w-[140px]">Reference</TableHead>
+                <TableHead className="min-w-[150px]">Tax Code</TableHead>
                 <TableHead className="w-32 text-right">Debit</TableHead>
                 <TableHead className="w-32 text-right">Credit</TableHead>
                 <TableHead className="w-10 text-right">Actions</TableHead>
@@ -196,33 +241,46 @@ export function JournalLinesEditor({
 
                 return (
                   <React.Fragment key={line.key}>
-                  <TableRow>
+                  <TableRow draggable={!disabled} onDragStart={() => setDragKey(line.key)} onDragOver={(e) => e.preventDefault()} onDrop={() => moveBefore(line.key)} className={cn(dragKey === line.key ? "opacity-50" : "")}>
+                    <TableCell className="cursor-grab text-ink-400"><GripVertical className="h-4 w-4" aria-label={`Drag line ${index + 1}`} /></TableCell>
                     <TableCell className="text-ink-500">{index + 1}</TableCell>
                     <TableCell>
                       <AccountPicker
                         accounts={accounts}
                         value={line.accountId}
-                        onChange={(accountId) => updateLine(line.key, { accountId })}
+                        onChange={(accountId) => updateLine(line.key, { accountId, accountSource: "USER" })}
                         disabled={disabled}
                       />
+                      <span className="text-[10px] text-ink-400">{line.accountSource === "AI" ? "AI Suggested Account" : "User Changed Account"}</span>
                     </TableCell>
                     <TableCell>
                       <Input
                         value={line.description}
-                        onChange={(e) => updateLine(line.key, { description: e.target.value })}
+                        onChange={(e) => updateLine(line.key, { description: e.target.value, descriptionSource: "USER" })}
                         placeholder="Line description"
                         disabled={disabled}
                         aria-label={`Line ${index + 1} description`}
                       />
+                      <span className="text-[10px] text-ink-400">{line.descriptionSource === "AI" ? "AI Suggested" : "User"}</span>
                     </TableCell>
                     <TableCell>
                       <Input
                         value={line.reference}
-                        onChange={(e) => updateLine(line.key, { reference: e.target.value })}
+                        onChange={(e) => updateLine(line.key, { reference: e.target.value, referenceSource: "USER" })}
                         placeholder="Invoice #, receipt #…"
                         disabled={disabled}
                         aria-label={`Line ${index + 1} reference`}
                       />
+                      <span className="text-[10px] text-ink-400">{line.referenceSource === "AI" ? "AI Suggested" : "User"}</span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <select value={line.taxCodeId} onChange={(e) => updateLine(line.key, { taxCodeId: e.target.value, taxCodeSource: "USER" })} disabled={disabled} className="h-9 w-full rounded border border-ink-200 bg-white px-2 text-sm">
+                          <option value="">No tax code</option>
+                          {taxCodes.filter((tax) => tax.isActive).map((tax) => <option key={tax.id} value={tax.id}>{tax.code} — {tax.name}</option>)}
+                        </select>
+                        <span className="text-[10px] text-ink-400">{line.taxCodeSource === "AI" ? "AI Suggested" : "User"}</span>
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Input
@@ -234,6 +292,7 @@ export function JournalLinesEditor({
                         className={cn("text-right", bothEntered ? "border-negative/60" : "")}
                         aria-label={`Line ${index + 1} debit`}
                       />
+                      <span className="text-[10px] text-ink-400">{line.debitSource === "AI" ? "AI Suggested" : "User"}</span>
                     </TableCell>
                     <TableCell>
                       <Input
@@ -245,9 +304,13 @@ export function JournalLinesEditor({
                         className={cn("text-right", bothEntered ? "border-negative/60" : "")}
                         aria-label={`Line ${index + 1} credit`}
                       />
+                      <span className="text-[10px] text-ink-400">{line.creditSource === "AI" ? "AI Suggested" : "User"}</span>
                     </TableCell>
                     <TableCell className="text-right">
-                      <button
+                      <div className="flex items-center justify-end gap-0.5">
+                        <button type="button" onClick={() => moveByIndex(index, -1)} disabled={disabled || index === 0} aria-label={`Move line ${index + 1} up`} className="inline-flex h-7 w-7 items-center justify-center rounded text-ink-400 hover:bg-surface-muted disabled:opacity-40"><ArrowUp className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => moveByIndex(index, 1)} disabled={disabled || index === lines.length - 1} aria-label={`Move line ${index + 1} down`} className="inline-flex h-7 w-7 items-center justify-center rounded text-ink-400 hover:bg-surface-muted disabled:opacity-40"><ArrowDown className="h-3.5 w-3.5" /></button>
+                        <button
                         type="button"
                         onClick={() => setRemoveKey(line.key)}
                         disabled={disabled}
@@ -256,11 +319,17 @@ export function JournalLinesEditor({
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow className="bg-surface-subtle">
+                    <TableCell colSpan={9} className="py-1">
+                      <button type="button" onClick={() => addLine(line.key)} disabled={disabled} className="inline-flex items-center gap-1 text-[11px] text-ink-500 hover:text-ink-900 disabled:opacity-50"><ArrowDownToLine className="h-3 w-3" />Insert line after</button>
                     </TableCell>
                   </TableRow>
                   {lineErrors[index] ? (
                     <tr>
-                      <td colSpan={7} className="px-4 pb-2 pt-0">
+                      <td colSpan={9} className="px-4 pb-2 pt-0">
                         <p className="text-xs text-negative">{lineErrors[index]}</p>
                       </td>
                     </tr>

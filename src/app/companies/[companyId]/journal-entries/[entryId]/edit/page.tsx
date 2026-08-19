@@ -7,6 +7,7 @@ import { getJournalEntry } from "@/accounting/journal-entries";
 import { listFiscalYears } from "@/accounting/fiscal-years";
 import { listAccountingPeriods } from "@/accounting/accounting-periods";
 import { listAccounts } from "@/accounting/accounts";
+import { listTaxCodes } from "@/tax/tax-codes";
 import { canManageJournalEntries } from "@/lib/rbac";
 import { JournalEntryForm } from "@/components/journal-entries/journal-entry-form";
 import type { JournalLineDraft } from "@/components/journal-entries/journal-lines-editor";
@@ -43,14 +44,16 @@ export default async function EditJournalEntryPage({
     redirect(detailPath);
   }
 
-  const [fiscalYearsResult, initialPeriodsResult, accountsResult] = await Promise.all([
+  const [fiscalYearsResult, initialPeriodsResult, accountsResult, taxCodesResult] = await Promise.all([
     listFiscalYears(organization.id, company.id),
     listAccountingPeriods(organization.id, company.id, entry.fiscalYearId),
     listAccounts(organization.id, company.id),
+    listTaxCodes(organization.id, company.id, { isActive: true }),
   ]);
   const fiscalYears = fiscalYearsResult ?? [];
   const initialPeriods = initialPeriodsResult ?? [];
   const accounts = accountsResult ?? [];
+  const taxCodes = (taxCodesResult ?? []).map((tax) => ({ id: tax.id, code: tax.code, name: tax.name, isActive: tax.isActive }));
 
   // Existing lines converted to editor drafts: debit/credit stay as
   // strings (never parsed to a JS float — see JournalLinesEditor), and
@@ -59,11 +62,19 @@ export default async function EditJournalEntryPage({
   // way a freshly-added line would.
   const initialLines: JournalLineDraft[] = entry.lines.map((line) => ({
     key: line.id,
+    lineId: line.id,
     accountId: line.accountId,
+    taxCodeId: line.taxCodeId ?? "",
     description: line.description ?? "",
+    accountSource: line.accountSource,
+    descriptionSource: line.descriptionSource,
+    debitSource: line.debitSource,
+    creditSource: line.creditSource,
+    taxCodeSource: line.taxCodeSource,
+    referenceSource: line.referenceSource,
     reference: line.reference ?? "",
-    debit: Number(line.debit) > 0 ? line.debit.toString() : "",
-    credit: Number(line.credit) > 0 ? line.credit.toString() : "",
+    debit: line.debit.gt(0) ? line.debit.toString() : "",
+    credit: line.credit.gt(0) ? line.credit.toString() : "",
   }));
 
   return (
@@ -98,9 +109,11 @@ export default async function EditJournalEntryPage({
             description: entry.description,
             label: entry.label,
             sourceType: entry.sourceType,
+            version: entry.version,
           }}
           cancelHref={detailPath}
           accounts={accounts}
+          taxCodes={taxCodes}
           initialLines={initialLines}
         />
       </div>
