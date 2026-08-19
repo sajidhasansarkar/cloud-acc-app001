@@ -814,9 +814,9 @@ export async function listReadyForPostingJournalEntries(
   const orderColumn = sort === "entryNumber"
     ? Prisma.raw('je."entryNumber"')
     : sort === "totalDebit"
-      ? Prisma.raw('total_debit')
+      ? Prisma.raw('"totalDebit"')
       : sort === "totalCredit"
-        ? Prisma.raw('total_credit')
+        ? Prisma.raw('"totalCredit"')
         : Prisma.raw('je."entryDate"');
   const directionSql = Prisma.raw(direction.toUpperCase());
   const offset = (page - 1) * pageSize;
@@ -854,8 +854,8 @@ export async function listReadyForPostingJournalEntries(
       ap."name" AS "accountingPeriodName",
       ap."status" AS "accountingPeriodStatus",
       je."status" AS status,
-      COALESCE(SUM(jel."debit"), 0) AS total_debit,
-      COALESCE(SUM(jel."credit"), 0) AS total_credit,
+      COALESCE(SUM(jel."debit"), 0) AS "totalDebit",
+      COALESCE(SUM(jel."credit"), 0) AS "totalCredit",
       COALESCE(SUM(jel."debit"), 0) - COALESCE(SUM(jel."credit"), 0) AS difference,
       COUNT(*) OVER() AS "totalCount"
     FROM "journal_entries" je
