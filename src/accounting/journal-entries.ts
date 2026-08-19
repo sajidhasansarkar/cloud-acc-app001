@@ -801,7 +801,7 @@ export async function listReadyForPostingJournalEntries(
   }
   if (input.fiscalYearId) conditions.push(Prisma.sql`je."fiscalYearId" = ${input.fiscalYearId}`);
   if (input.accountingPeriodId) conditions.push(Prisma.sql`je."accountingPeriodId" = ${input.accountingPeriodId}`);
-  if (input.status && input.status !== "READY_FOR_POSTING") return {
+  if (input.status && input.status !== "READY_TO_POST") return {
     entries: [],
     total: 0,
     page: 1,
@@ -900,7 +900,7 @@ export async function listReadyForPostingJournalEntries(
       accountingPeriodId: row.accountingPeriodId,
       accountingPeriodName: row.accountingPeriodName,
       accountingPeriodStatus: row.accountingPeriodStatus,
-      status: "READY_FOR_POSTING",
+      status: "READY_TO_POST",
       totalDebit: row.totalDebit.toFixed(4),
       totalCredit: row.totalCredit.toFixed(4),
       difference: row.difference.toFixed(4),
