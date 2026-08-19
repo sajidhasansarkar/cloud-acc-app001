@@ -199,7 +199,7 @@ export function JournalLinesEditor({
           Journal Lines
         </h3>
         {lines.length > 0 ? (
-          <Button type="button" variant="outline" size="sm" onClick={addLine} disabled={disabled}>
+          <Button type="button" variant="outline" size="sm" onClick={() => addLine()} disabled={disabled}>
             <Plus className="h-3.5 w-3.5" />
             Add Line
           </Button>
@@ -211,7 +211,7 @@ export function JournalLinesEditor({
           icon={ListChecks}
           title="No journal lines added."
           action={
-            <Button type="button" variant="primary" size="sm" onClick={addLine} disabled={disabled}>
+            <Button type="button" variant="primary" size="sm" onClick={() => addLine()} disabled={disabled}>
               <Plus className="h-3.5 w-3.5" />
               Add Line
             </Button>
