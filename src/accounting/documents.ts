@@ -62,11 +62,11 @@ export async function getOwnedDocumentDetails(organizationId: string, companyId:
   return prisma.document.findFirst({
     where: { id: documentId, organizationId, companyId, company: { organizationId } },
     select: {
-      id: true, originalFileName: true, fileType: true, mimeType: true, fileSize: true, fileHash: true, documentStatus: true, createdAt: true, updatedAt: true,
+      id: true, originalFileName: true, fileType: true, mimeType: true, fileSize: true, fileHash: true, documentStatus: true, storageKey: true, uploadedById: true, createdAt: true, updatedAt: true,
       uploadedBy: { select: { name: true } },
-      company: { select: { displayName: true } },
+      company: { select: { displayName: true, currency: true } },
       classification: { select: { status: true, documentType: true, confidence: true, reasoning: true, processingRoute: true, classifierMethod: true, manuallyReviewed: true, classifiedAt: true, correctedBy: { select: { name: true } } } },
-      processingResult: { select: { extractionStatus: true, pageCount: true, sheetCount: true, tableCount: true, rowCount: true, columnCount: true, textBlockCount: true, requiresOcr: true, extractedContentReference: true, processingError: true, warnings: true, processedAt: true } },
+      processingResult: { select: { extractionStatus: true, pageCount: true, sheetCount: true, tableCount: true, rowCount: true, columnCount: true, textBlockCount: true, requiresOcr: true, extractedContentReference: true, processingError: true, warnings: true, processedAt: true, aiUnderstandingProvider: true, aiUnderstandingModel: true, aiUnderstandingReference: true, aiUnderstandingError: true, aiUnderstandingProcessedAt: true } },
       normalizedCandidates: {
         orderBy: [{ sourcePageNumber: "asc" }, { sourceRowNumber: "asc" }, { createdAt: "asc" }],
         include: {

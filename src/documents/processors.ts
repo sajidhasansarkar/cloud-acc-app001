@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import type { DocumentFileType } from "@/documents/config";
 import type { ExtractedCell, ExtractedTable, NormalizedDocumentContent } from "@/documents/processing-types";
 import { getOCRProvider } from "@/documents/ocr";
+import { isPdfRasterizerAvailable, rasterizePdfPage } from "@/documents/pdf-raster";
 
 const MAX_CELLS = 250_000;
 const MAX_PREVIEW_ROWS = 10_000;
@@ -73,10 +74,34 @@ export async function extractPdf(documentId: string, buffer: Buffer) {
     return page;
   });
   content.pages = pages;
+
+  // BUG FIX: previously, pages with no extractable text (scanned/image-only
+  // PDFs) were just flagged requiresOcr=true and left empty — nothing ever
+  // actually ran OCR on them. If a rasterizer + OCR provider are configured,
+  // attempt real OCR per empty page now, instead of silently returning an
+  // empty document (see requirement: "do not silently return an empty document").
+  const emptyPageNumbers = pages.filter((page) => !page.text).map((page) => page.pageNumber);
+  if (emptyPageNumbers.length && (await isPdfRasterizerAvailable())) {
+    const ocrProvider = getOCRProvider();
+    for (const pageNumber of emptyPageNumbers) {
+      try {
+        const image = await rasterizePdfPage(buffer, pageNumber);
+        if (!image) { content.warnings.push(`Page ${pageNumber} could not be rasterized for OCR.`); continue; }
+        const ocrResult = await ocrProvider.extract(image, "image/png");
+        if (!ocrResult.text.trim()) { content.warnings.push(`OCR on page ${pageNumber} found no readable text.`); continue; }
+        const page = pages.find((p) => p.pageNumber === pageNumber)!;
+        page.text = ocrResult.text;
+        page.textBlocks = ocrResult.lines.map((line, i) => ({ text: line.text, lineOrder: i + 1 }));
+      } catch (error) {
+        content.warnings.push(`OCR failed for page ${pageNumber}: ${error instanceof Error ? error.message : "unknown error"}.`);
+      }
+    }
+  }
+
   content.textBlocks = pages.flatMap((p) => p.textBlocks.map((b) => ({ source: `page:${p.pageNumber}`, ...b })));
   content.metadata = { pageCount: parsed.numpages, pdfInfo: parsed.info ?? null };
   const emptyPages = pages.filter((page) => !page.text).length;
-  if (!content.textBlocks.length) content.warnings.push("No text could be extracted from this PDF. It may be image-only and require OCR.");
+  if (!content.textBlocks.length) content.warnings.push("No text could be extracted from this PDF. It may be image-only and require OCR. Set DOCUMENT_PDF_RASTERIZER=poppler and DOCUMENT_OCR_PROVIDER (tesseract-cli or openai) to enable OCR for scanned PDFs.");
   else if (emptyPages > 0) content.warnings.push(`${emptyPages} PDF page${emptyPages === 1 ? "" : "s"} contained no extractable text.`);
   return { content, pageCount: parsed.numpages, tableCount: content.tables.length, rowCount: content.tables.reduce((n, t) => n + t.rows.length, 0), columnCount: content.tables.reduce((n, t) => Math.max(n, t.headers.length), 0), textBlockCount: content.textBlocks.length, requiresOcr: !content.textBlocks.length, partial: emptyPages > 0 };
 }

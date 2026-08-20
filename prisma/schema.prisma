@@ -828,6 +828,17 @@ model DocumentProcessingResult {
   processingError            String?
   warnings                   Json?
   processedAt                DateTime?
+  // Phase 5A-9: OpenAI document-understanding output. `aiUnderstandingReference`
+  // points to the same private document-storage abstraction used for
+  // `extractedContentReference` and holds the full structured OpenAI result
+  // (documentType, transactions, statement findings). Kept separate from the
+  // deterministic extraction result so the deterministic extraction path is
+  // never lost or overwritten if AI understanding fails or is unconfigured.
+  aiUnderstandingProvider    String?
+  aiUnderstandingModel       String?
+  aiUnderstandingReference   String?
+  aiUnderstandingError       String?
+  aiUnderstandingProcessedAt DateTime?
   createdAt                  DateTime                @default(now())
   updatedAt                  DateTime                @updatedAt
 

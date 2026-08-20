@@ -1,9 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getOwnedCompany } from "@/accounting/access";
 import { getOwnedDocumentDetails } from "@/accounting/documents";
 import { getDocumentStorage } from "@/storage/document-storage";
 import type { NormalizedCandidateDraft, NormalizationConfidence, NormalizationResult } from "@/documents/normalization-types";
+import type { NormalizedDocumentContent } from "@/documents/processing-types";
+import { DOCUMENT_AI_PROVIDER, DocumentAINotConfiguredError, extractDocumentWithOpenAI } from "@/documents/ai-extraction";
+import { processingRouteFor } from "@/documents/classification-config";
 
 const DESCRIPTION_HEADERS = ["description", "details", "narration", "particulars", "memo", "transaction details", "remarks"];
 const REFERENCE_HEADERS = ["reference", "ref", "reference no", "reference number", "transaction id", "invoice no", "invoice number", "document no", "document number", "cheque no", "check no"];
@@ -168,22 +172,138 @@ function markDuplicates(candidates: NormalizedCandidateDraft[]) {
   });
 }
 
-export async function normalizeDocument(organizationId: string, companyId: string, documentId: string): Promise<NormalizationResult | { error: string }> {
+function isAIExtractionEnabled() {
+  return DOCUMENT_AI_PROVIDER === "openai";
+}
+
+async function audit(organizationId: string, companyId: string, documentId: string, userId: string, action: string, details?: Prisma.InputJsonValue) {
+  try {
+    await prisma.documentAuditEvent.create({ data: { id: randomUUID(), organizationId, companyId, documentId, userId, action, details } });
+  } catch {
+    // Best-effort only; audit failures must never block normalization.
+  }
+}
+
+export async function normalizeDocument(organizationId: string, companyId: string, documentId: string, userId?: string): Promise<NormalizationResult | { error: string }> {
   const document = await getOwnedDocumentDetails(organizationId, companyId, documentId);
   if (!document) return { error: "Document not found." };
   if (document.documentStatus !== "COMPLETED" || !document.processingResult?.extractedContentReference) return { error: "Document must be successfully processed before normalization." };
   const company = await getOwnedCompany(organizationId, companyId);
   if (!company) return { error: "Company not found." };
+  const auditUserId = userId ?? document.uploadedById;
   try {
     const storage = getDocumentStorage();
     const raw = await storage.read(document.processingResult.extractedContentReference);
-    const content = JSON.parse(raw.toString("utf8")) as { kind: string; pages?: Array<{ pageNumber: number; text: string }>; columns?: string[]; rows?: unknown[][]; workbook?: string; sheets?: Array<{ name: string; columns: string[]; rows: unknown[][] }> };
+    const content = JSON.parse(raw.toString("utf8")) as NormalizedDocumentContent;
+    // BUG FIX: the extractors (processors.ts) never write a `content.kind`
+    // field at all, yet this function's dispatch below always branched on
+    // `content.kind === "csv" | "excel" | "pdf" | "image"`. Since that field
+    // was always `undefined`, NONE of those branches were ever reachable for
+    // ANY document, of any type — normalization silently produced zero
+    // candidates for every document ever processed, with no error surfaced
+    // anywhere. `kind` must be derived from the document's real file type.
+    const kind: "csv" | "excel" | "pdf" | "image" | "unsupported" =
+      document.fileType === "CSV" ? "csv"
+      : document.fileType === "XLSX" || document.fileType === "XLS" ? "excel"
+      : document.fileType === "PDF" ? "pdf"
+      : document.fileType === "JPG" || document.fileType === "JPEG" || document.fileType === "PNG" || document.fileType === "WEBP" || document.fileType === "TIFF" ? "image"
+      : "unsupported";
     let candidates: NormalizedCandidateDraft[] = [];
     let sourceRowCount = 0;
-    if (content.kind === "csv") { sourceRowCount = (content.rows ?? []).length; candidates = buildTabularCandidates(undefined, content.columns ?? [], content.rows ?? [], company.currency); }
-    else if (content.kind === "excel") { for (const sheet of content.sheets ?? []) { sourceRowCount += (sheet.rows ?? []).length; candidates.push(...buildTabularCandidates(sheet.name, sheet.columns ?? [], sheet.rows ?? [], company.currency)); } }
-    else if (content.kind === "pdf") { sourceRowCount = (content.pages ?? []).reduce((total, page) => total + String(page.text ?? "").split(/\r?\n/).filter(Boolean).length, 0); candidates = buildPdfCandidates(content.pages ?? [], company.currency); }
-    else if (content.kind === "image") return { error: "Image documents require future OCR before normalization." };
+
+    const aiEnabled = isAIExtractionEnabled();
+
+    if (kind === "unsupported") {
+      return { error: "This file type is not supported for transaction extraction." };
+    }
+
+    if (aiEnabled) {
+      // OpenAI document understanding replaces the regex/header-matching
+      // extraction below for every supported kind, including images (which
+      // the old regex path could never handle at all).
+      let imagePayload: { buffer: Buffer; mimeType: string } | undefined;
+      if (kind === "image") {
+        if (!document.storageKey) return { error: "Document storage reference is missing." };
+        try {
+          imagePayload = { buffer: await storage.read(document.storageKey), mimeType: document.mimeType };
+        } catch {
+          return { error: "Unable to read the original image for AI processing." };
+        }
+      }
+      try {
+        const result = await extractDocumentWithOpenAI({
+          content,
+          companyCurrency: company.currency,
+          knownDocumentType: document.classification?.documentType,
+          image: imagePayload,
+        });
+        candidates = result.transactions;
+        sourceRowCount = candidates.length;
+
+        // Persist the full structured AI result (including statement
+        // findings, which do not fit the transaction-candidate table) next
+        // to the deterministic extraction artifact.
+        const aiReference = `document-ai-understanding/${companyId}/${document.id}/${randomUUID()}.json`;
+        await storage.upload(aiReference, new Blob([JSON.stringify(result)], { type: "application/json" }));
+        const previousReference = document.processingResult.aiUnderstandingReference;
+        await prisma.documentProcessingResult.update({
+          where: { documentId: document.id },
+          data: {
+            aiUnderstandingProvider: result.provider,
+            aiUnderstandingModel: result.model,
+            aiUnderstandingReference: aiReference,
+            aiUnderstandingError: null,
+            aiUnderstandingProcessedAt: new Date(),
+          },
+        });
+        if (previousReference && previousReference !== aiReference) await storage.delete(previousReference).catch(() => undefined);
+
+        // Reclassify from real content if the OpenAI read materially
+        // disagrees with the fast filename-based pre-classification. The
+        // pre-classification gate itself is left untouched (extraction
+        // already ran by this point), this only corrects the *record*.
+        if (document.classification && (document.classification.documentType !== result.documentType || document.classification.classifierMethod !== "OPENAI_CONTENT")) {
+          await prisma.documentClassification.update({
+            where: { documentId: document.id },
+            data: {
+              documentType: result.documentType,
+              confidence: result.confidence === "HIGH" ? "HIGH" : result.confidence === "MEDIUM" ? "MEDIUM" : "LOW",
+              reasoning: result.reasoning || document.classification.reasoning,
+              processingRoute: processingRouteFor(result.documentType),
+              classifierMethod: "OPENAI_CONTENT",
+              classifiedAt: new Date(),
+            },
+          });
+        }
+        await audit(organizationId, companyId, document.id, auditUserId, "AI_DOCUMENT_UNDERSTANDING_COMPLETED", { documentType: result.documentType, confidence: result.confidence, transactionCount: candidates.length, statementFindingCount: result.statementFindings.length, findingCount: result.findings.length });
+      } catch (error) {
+        const configured = !(error instanceof DocumentAINotConfiguredError);
+        const message = error instanceof DocumentAINotConfiguredError ? error.message : "OpenAI document understanding failed. Please retry.";
+        if (configured) console.error("AI document understanding failed", error);
+        await prisma.documentProcessingResult.update({ where: { documentId: document.id }, data: { aiUnderstandingError: message, aiUnderstandingProcessedAt: new Date() } }).catch(() => undefined);
+        await audit(organizationId, companyId, document.id, auditUserId, "AI_DOCUMENT_UNDERSTANDING_FAILED", { reason: message });
+        return { error: message };
+      }
+    } else if (kind === "csv") {
+      sourceRowCount = content.rows.length;
+      // BUG FIX: content.rows is Array<{source, rowNumber, cells: string[]}>
+      // and content.columns is Array<{source,index,name}> — buildTabularCandidates
+      // needs plain arrays indexable by column position, not these wrapper objects.
+      candidates = buildTabularCandidates(undefined, content.columns.map((c) => c.name), content.rows.map((r) => r.cells), company.currency);
+    } else if (kind === "excel") {
+      for (const sheet of content.sheets) {
+        sourceRowCount += sheet.rows.length;
+        // sheet.columns is already a plain string[] (raw header row), but
+        // sheet.rows[i].cells is ExtractedCell[] — unwrap to plain values.
+        candidates.push(...buildTabularCandidates(sheet.name, sheet.columns, sheet.rows.map((r) => r.cells.map((c) => (c.value == null ? "" : String(c.value)))), company.currency));
+      }
+    } else if (kind === "pdf") {
+      sourceRowCount = content.pages.reduce((total, page) => total + String(page.text ?? "").split(/\r?\n/).filter(Boolean).length, 0);
+      candidates = buildPdfCandidates(content.pages, company.currency);
+    } else if (kind === "image") {
+      return { error: "OpenAI AI processing is not configured. Set DOCUMENT_AI_PROVIDER=openai and OPENAI_API_KEY to process image documents." };
+    }
+
     candidates = markDuplicates(candidates);
     const existing = await prisma.normalizedTransactionCandidate.findMany({ where: { documentId: document.id }, select: { id: true, sourceRowReference: true, manuallyCorrected: true } });
     const sourceKeys = new Set(candidates.map((c) => c.sourceRowReference));

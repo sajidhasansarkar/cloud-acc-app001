@@ -7,6 +7,7 @@ import { getOwnedDocument } from "@/accounting/documents";
 import { getDocumentStorage } from "@/storage/document-storage";
 import { EXTRACTORS } from "@/documents/processors";
 import type { DocumentProcessingResult, NormalizedDocumentContent } from "@/documents/processing-types";
+import { normalizeDocument } from "@/documents/normalization";
 
 const SAFE_ERROR = "Document extraction failed. Please retry.";
 const UNSUPPORTED_ERROR = "This document type is not supported by the extraction engine yet.";
@@ -59,6 +60,12 @@ export async function extractOwnedDocumentContent(organizationId: string, compan
   }
 
   await prisma.documentProcessingResult.upsert({ where: { documentId: document.id }, create: { documentId: document.id, detectedFileType: document.fileType, extractionStatus: "PROCESSING", requiresOcr: false }, update: { extractionStatus: "PROCESSING", processingError: null } });
+  // BUG FIX (Phase 5A-9): Document.documentStatus was never advanced past
+  // "UPLOADED" anywhere in the codebase, which silently broke normalizeDocument
+  // (it requires documentStatus === "COMPLETED" and therefore could never run,
+  // even when called). Extraction is now the single place that owns this
+  // transition, matching the documented lifecycle (UPLOADED -> PROCESSING -> COMPLETED/FAILED).
+  await prisma.document.update({ where: { id: document.id }, data: { documentStatus: "PROCESSING" } }).catch(() => undefined);
   await audit(organizationId, companyId, document.id, userId, "EXTRACTION_STARTED", { forced: force, fileType: document.fileType });
 
   let newReference: string | undefined;
@@ -81,13 +88,29 @@ export async function extractOwnedDocumentContent(organizationId: string, compan
     const previous = existing?.extractedContentReference;
     await prisma.documentProcessingResult.update({ where: { documentId: document.id }, data: { detectedFileType: document.fileType, extractionStatus: status, pageCount: extracted.pageCount ?? null, sheetCount: extracted.sheetCount ?? null, tableCount: extracted.tableCount ?? null, rowCount: extracted.rowCount ?? null, columnCount: extracted.columnCount ?? null, textBlockCount: extracted.textBlockCount ?? null, requiresOcr: Boolean(extracted.requiresOcr), extractedContentReference: reference, processingError: null, warnings, processedAt: new Date() } });
     if (previous && previous !== reference) await getDocumentStorage().delete(previous).catch(() => undefined);
+    // See fix note above: this is what lets normalizeDocument (and therefore
+    // the whole downstream AI-review / journal-draft pipeline) run at all.
+    await prisma.document.update({ where: { id: document.id }, data: { documentStatus: "COMPLETED" } }).catch(() => undefined);
     await audit(organizationId, companyId, document.id, userId, status === "COMPLETED" ? "EXTRACTION_COMPLETED" : "EXTRACTION_PARTIAL", { status, warnings });
+
+    // Automatically continue the pipeline: extraction alone was previously a
+    // dead end because nothing ever called normalizeDocument. This is
+    // best-effort — a normalization/AI failure must not make the (successful)
+    // extraction call itself look like it failed. The UI surfaces normalization
+    // status/errors separately (see aiUnderstandingError / normalizedCandidates).
+    try {
+      await normalizeDocument(organizationId, companyId, document.id, userId);
+    } catch (normalizationError) {
+      console.error("Post-extraction normalization failed", normalizationError);
+    }
+
     return { documentId, status, fileType: document.fileType, metadata: { pageCount: extracted.pageCount, sheetCount: extracted.sheetCount, tableCount: extracted.tableCount, rowCount: extracted.rowCount, columnCount: extracted.columnCount, textBlockCount: extracted.textBlockCount, requiresOcr: Boolean(extracted.requiresOcr) }, warnings, extractedContentReference: reference, processedAt: new Date() };
   } catch (error) {
     if (newReference) await getDocumentStorage().delete(newReference).catch(() => undefined);
     const message = safeError(error);
     console.error("Document extraction failed", error);
     await prisma.documentProcessingResult.update({ where: { documentId: document.id }, data: { extractionStatus: "FAILED", processingError: message, warnings: [message], processedAt: null } });
+    await prisma.document.update({ where: { id: document.id }, data: { documentStatus: "FAILED" } }).catch(() => undefined);
     await audit(organizationId, companyId, document.id, userId, "EXTRACTION_FAILED", { reason: message });
     return { documentId, status: "FAILED", fileType: document.fileType, metadata: { requiresOcr: false }, warnings: [message], error: message };
   }

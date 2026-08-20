@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import OpenAI from "openai";
 
 export type OCRBoundingBox = { x: number; y: number; width: number; height: number };
 export type OCRLine = { text: string; boundingBox?: OCRBoundingBox; confidence?: number };
@@ -42,6 +43,42 @@ export class TesseractCliOCRProvider implements OCRProvider {
   }
 }
 
+/**
+ * OpenAI-vision-backed OCR provider. Since this project's configured AI
+ * provider is OpenAI (see src/ai/provider.ts, src/documents/ai-extraction.ts),
+ * this is the recommended OCR path — it doesn't depend on a local `tesseract`
+ * binary being installed on the server at all, unlike TesseractCliOCRProvider.
+ * Enable with DOCUMENT_OCR_PROVIDER=openai (requires OPENAI_API_KEY).
+ */
+export class OpenAIVisionOCRProvider implements OCRProvider {
+  name = "openai-vision";
+  private readonly model = process.env.DOCUMENT_OCR_OPENAI_MODEL || "gpt-4o-mini";
+
+  async extract(buffer: Buffer, mimeType: string): Promise<OCRResult> {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.");
+    const client = new OpenAI({ apiKey });
+    const base64 = buffer.toString("base64");
+    const completion = await client.chat.completions.create({
+      model: this.model,
+      temperature: 0,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Transcribe ALL visible text from this image exactly as it appears, preserving line breaks and left-to-right reading order. Do not summarize, translate, or omit anything. If the image contains no readable text, respond with exactly: NO_TEXT_FOUND." },
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
+          ],
+        },
+      ],
+    });
+    const text = completion.choices[0]?.message?.content?.trim() ?? "";
+    if (!text || text === "NO_TEXT_FOUND") return { text: "", lines: [], warnings: [] };
+    const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => ({ text: line }));
+    return { text, lines, warnings: [] };
+  }
+}
+
 function extensionForMime(mimeType: string) {
   if (mimeType === "image/png") return ".png";
   if (mimeType === "image/webp") return ".webp";
@@ -60,6 +97,8 @@ function run(command: string, args: string[]) {
 }
 
 export function getOCRProvider(): OCRProvider {
-  if ((process.env.DOCUMENT_OCR_PROVIDER || "none").toLowerCase() === "tesseract-cli") return new TesseractCliOCRProvider();
+  const provider = (process.env.DOCUMENT_OCR_PROVIDER || "none").toLowerCase();
+  if (provider === "tesseract-cli") return new TesseractCliOCRProvider();
+  if (provider === "openai") return new OpenAIVisionOCRProvider();
   return new UnavailableOCRProvider();
 }
