@@ -307,39 +307,60 @@ export async function normalizeDocument(organizationId: string, companyId: strin
     candidates = markDuplicates(candidates);
     const existing = await prisma.normalizedTransactionCandidate.findMany({ where: { documentId: document.id }, select: { id: true, sourceRowReference: true, manuallyCorrected: true } });
     const sourceKeys = new Set(candidates.map((c) => c.sourceRowReference));
+    const existingByRef = new Map(existing.map((e) => [e.sourceRowReference, e]));
+
+    // BUG FIX (P2028 "Transaction not found" on Vercel): this used to loop
+    // through every candidate and `await` an individual upsert() one at a
+    // time *inside* a single interactive $transaction. For any document with
+    // more than a handful of AI-extracted transactions, that easily blew
+    // past Prisma's default 5s interactive-transaction timeout (or lost the
+    // pooled connection mid-transaction), which is exactly this error. Now:
+    // new candidates go through one batched createMany() round trip, and
+    // only rows that actually already exist (re-runs) are updated
+    // individually, with a generous explicit timeout as a safety net either way.
+    const toCreate = candidates.filter((c) => !existingByRef.get(c.sourceRowReference));
+    const toUpdate = candidates.filter((c) => {
+      const old = existingByRef.get(c.sourceRowReference);
+      return old && !old.manuallyCorrected;
+    });
+    const candidateData = (candidate: NormalizedCandidateDraft) => ({
+      organizationId,
+      companyId,
+      sourceSheetName: candidate.sourceSheetName,
+      sourcePageNumber: candidate.sourcePageNumber,
+      sourceRowNumber: candidate.sourceRowNumber,
+      date: candidate.date,
+      dateConfidence: candidate.dateConfidence,
+      description: candidate.description,
+      descriptionConfidence: candidate.descriptionConfidence,
+      reference: candidate.reference,
+      referenceConfidence: candidate.referenceConfidence,
+      debit: candidate.debit,
+      credit: candidate.credit,
+      amount: candidate.amount,
+      balance: candidate.balance,
+      currency: candidate.currency,
+      currencyConfidence: candidate.currencyConfidence,
+      transactionType: candidate.transactionType,
+      confidence: candidate.confidence,
+      warnings: candidate.warnings,
+      possibleDuplicate: candidate.possibleDuplicate,
+    });
+
     await prisma.$transaction(async (tx) => {
-      for (const candidate of candidates) {
-        const old = existing.find((e) => e.sourceRowReference === candidate.sourceRowReference);
-        const data = {
-          organizationId,
-          companyId,
-          sourceSheetName: candidate.sourceSheetName,
-          sourcePageNumber: candidate.sourcePageNumber,
-          sourceRowNumber: candidate.sourceRowNumber,
-          date: candidate.date,
-          dateConfidence: candidate.dateConfidence,
-          description: candidate.description,
-          descriptionConfidence: candidate.descriptionConfidence,
-          reference: candidate.reference,
-          referenceConfidence: candidate.referenceConfidence,
-          debit: candidate.debit,
-          credit: candidate.credit,
-          amount: candidate.amount,
-          balance: candidate.balance,
-          currency: candidate.currency,
-          currencyConfidence: candidate.currencyConfidence,
-          transactionType: candidate.transactionType,
-          confidence: candidate.confidence,
-          warnings: candidate.warnings,
-          possibleDuplicate: candidate.possibleDuplicate,
-        };
-        if (old?.manuallyCorrected) continue;
-        await tx.normalizedTransactionCandidate.upsert({ where: { documentId_sourceRowReference: { documentId: document.id, sourceRowReference: candidate.sourceRowReference } }, create: { documentId: document.id, sourceRowReference: candidate.sourceRowReference, ...data }, update: data });
+      if (toCreate.length) {
+        await tx.normalizedTransactionCandidate.createMany({
+          data: toCreate.map((candidate) => ({ documentId: document.id, sourceRowReference: candidate.sourceRowReference, ...candidateData(candidate) })),
+          skipDuplicates: true,
+        });
+      }
+      for (const candidate of toUpdate) {
+        await tx.normalizedTransactionCandidate.update({ where: { documentId_sourceRowReference: { documentId: document.id, sourceRowReference: candidate.sourceRowReference } }, data: candidateData(candidate) });
       }
       const stale = existing.filter((e) => !sourceKeys.has(e.sourceRowReference) && !e.manuallyCorrected).map((e) => e.id);
       if (stale.length) await tx.normalizedTransactionCandidate.deleteMany({ where: { id: { in: stale } } });
       await tx.aIReviewRecord.updateMany({ where: { candidate: { documentId: document.id } }, data: { status: "NOT_REVIEWED", contextVersion: "v1" } });
-    });
+    }, { timeout: 30000, maxWait: 15000 });
     return { documentId: document.id, candidateCount: candidates.length, ignoredRowCount: Math.max(0, sourceRowCount - candidates.length), duplicateCount: candidates.filter((c) => c.possibleDuplicate).length, warningsCount: candidates.reduce((n, c) => n + c.warnings.length, 0) };
   } catch (error) {
     console.error("Document normalization failed", error);
