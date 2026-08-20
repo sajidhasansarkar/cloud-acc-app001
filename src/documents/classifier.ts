@@ -14,7 +14,7 @@ export interface DocumentClassifier {
 type Rule = { type: AccountingDocumentType; exact: RegExp[]; partial: RegExp[]; label: string };
 
 const RULES: Rule[] = [
-  { type: "BANK_STATEMENT", exact: [/\bbank[ _-]+statement\b/i, /\bstatement[ _-]+of[ _-]+account\b/i], partial: [/\bbank\b/i, /\btransaction[ _-]+history\b/i], label: "bank statement" },
+  { type: "BANK_STATEMENT", exact: [/\bbank[ _-]+statement\b/i, /\bstatement[ _-]+of[ _-]+account\b/i, /\bche(?:qu|ck)ing[ _-]+(?:acc(?:ount)?|statement)\b/i, /\bsavings[ _-]+(?:acc(?:ount)?|statement)\b/i], partial: [/\bbank\b/i, /\btransaction[ _-]+history\b/i, /\bche(?:qu|ck)ing\b/i, /\bsavings\b/i, /\biban\b/i, /\bswift\b/i], label: "bank statement" },
   { type: "BALANCE_SHEET", exact: [/\bbalance[ _-]+sheet\b/i, /\bstatement[ _-]+of[ _-]+financial[ _-]+position\b/i], partial: [/\bbalance\b/i], label: "balance sheet" },
   { type: "INCOME_STATEMENT", exact: [/\bincome[ _-]+statement\b/i, /\bprofit[ _-]+and[ _-]+loss\b/i, /\bp[ _&-]+l\b/i], partial: [/\bincome\b/i, /\bprofit\b/i], label: "income statement" },
   { type: "TRIAL_BALANCE", exact: [/\btrial[ _-]+balance\b/i], partial: [/\btrial\b/i], label: "trial balance" },

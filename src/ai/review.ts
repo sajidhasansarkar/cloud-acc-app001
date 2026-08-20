@@ -128,7 +128,12 @@ export async function generateAccountingAISuggestion(
       select: { id: true },
     });
 
-    const status = suggestion.confidence === "LOW" || suggestion.warnings.length ? "NEEDS_HUMAN_REVIEW" : "NEEDS_HUMAN_REVIEW";
+    // NOTE: every suggestion currently lands in NEEDS_HUMAN_REVIEW regardless
+    // of confidence/warnings — this used to be a no-op ternary that always
+    // evaluated to the same value on both branches. Simplified to make that
+    // explicit. If a future phase wants confidence-based auto-review, this is
+    // the line to change.
+    const status = "NEEDS_HUMAN_REVIEW" as const;
     await prisma.aIReviewRecord.update({ where: { id: review.id }, data: { status, provider: provider.provider, model: provider.model, contextVersion: ACCOUNTING_REVIEW_VERSION } });
     await prisma.aIReviewAudit.create({
       data: {

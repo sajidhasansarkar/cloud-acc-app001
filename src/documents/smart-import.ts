@@ -58,6 +58,11 @@ export type SmartImportOutcome = {
 } | {
   ok: false;
   error: string;
+  /** Present only when the failure is "classification needs review" — lets
+   *  the caller offer manual classification right there instead of sending
+   *  the user away to the Documents page. */
+  documentId?: string;
+  needsClassification?: boolean;
 };
 
 export async function runSmartImport(
@@ -92,7 +97,9 @@ export async function runSmartImport(
     return {
       ok: false,
       error:
-        "We couldn't confidently tell what kind of document this is (statement, invoice, bill, or receipt). Please classify it manually on the Documents page, then try Smart Import again.",
+        "We couldn't confidently tell what kind of document this is. Pick the document type below to continue.",
+      documentId,
+      needsClassification: true,
     };
   }
 

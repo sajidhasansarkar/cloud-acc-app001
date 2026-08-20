@@ -11,6 +11,13 @@ import { normalizeDocument } from "@/documents/normalization";
 
 const SAFE_ERROR = "Document extraction failed. Please retry.";
 const UNSUPPORTED_ERROR = "This document type is not supported by the extraction engine yet.";
+// If a PROCESSING run never reaches its finally-state (serverless function
+// killed mid-request by a platform timeout, cold-start crash, etc.), the row
+// was previously stuck at "already in progress" forever — no code path ever
+// cleared it, so every future Smart Import/extract attempt for that document
+// failed permanently with no way to recover except a manual DB edit. Treat a
+// PROCESSING row older than this as abandoned and safe to retry.
+const STALE_PROCESSING_MS = 5 * 60 * 1000;
 
 function processingReference(companyId: string, documentId: string) { return `document-extraction/${companyId}/${documentId}/${randomUUID()}.json`; }
 
@@ -52,7 +59,8 @@ export async function extractOwnedDocumentContent(organizationId: string, compan
   }
 
   const existing = await extractionResult(document.id);
-  if (!force && existing?.extractionStatus === "PROCESSING") {
+  const stuck = existing?.extractionStatus === "PROCESSING" && Date.now() - existing.updatedAt.getTime() > STALE_PROCESSING_MS;
+  if (!force && existing?.extractionStatus === "PROCESSING" && !stuck) {
     return { documentId, status: "FAILED", fileType: document.fileType, metadata: { requiresOcr: existing.requiresOcr }, warnings: [], error: "Document extraction is already in progress." };
   }
   if (!force && existing?.extractionStatus === "COMPLETED" && existing.extractedContentReference) {

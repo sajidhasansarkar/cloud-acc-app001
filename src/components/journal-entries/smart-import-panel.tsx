@@ -12,9 +12,26 @@ import {
 } from "@/documents/config";
 import { Button } from "@/components/ui/button";
 import { smartImportFromBlobAction, smartImportFromDocumentIdAction } from "@/actions/smart-import";
+import { correctDocumentClassificationAction } from "@/actions/documents";
 import type { SmartImportOutcome } from "@/documents/smart-import";
+import type { AccountingDocumentType } from "@prisma/client";
 
 type Stage = "idle" | "uploading" | "processing" | "done";
+
+const DOC_TYPE_OPTIONS: { value: AccountingDocumentType; label: string }[] = [
+  { value: "BANK_STATEMENT", label: "Bank statement" },
+  { value: "INVOICE", label: "Invoice" },
+  { value: "BILL", label: "Bill" },
+  { value: "RECEIPT", label: "Receipt" },
+  { value: "BALANCE_SHEET", label: "Balance sheet" },
+  { value: "INCOME_STATEMENT", label: "Income statement" },
+  { value: "TRIAL_BALANCE", label: "Trial balance" },
+  { value: "GENERAL_LEDGER", label: "General ledger" },
+  { value: "TAX_DOCUMENT", label: "Tax document" },
+  { value: "PAYROLL_DOCUMENT", label: "Payroll document" },
+  { value: "EXPENSE_REPORT", label: "Expense report" },
+  { value: "OTHER", label: "Other" },
+];
 
 export function SmartImportPanel({
   companyId,
@@ -32,6 +49,10 @@ export function SmartImportPanel({
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [emptyResult, setEmptyResult] = useState<SmartImportOutcome | null>(null);
+  const [classifyDocId, setClassifyDocId] = useState<string | null>(null);
+  const [selectedType, setSelectedType] = useState<AccountingDocumentType>("BANK_STATEMENT");
+  const [classifying, setClassifying] = useState(false);
+  const [classifyError, setClassifyError] = useState<string | null>(null);
 
   function validate(candidate: File) {
     const type = getDocumentFileType(candidate.name);
@@ -85,22 +106,56 @@ export function SmartImportPanel({
     setStage("uploading");
     try {
       const outcome = storageProvider === "vercel-blob" ? await runViaBlob(file) : await runViaLocal(file);
-      if (!outcome.ok) {
-        setError(outcome.error);
-        setStage("done");
-        return;
-      }
-      if (!outcome.candidateCount) {
-        setEmptyResult(outcome);
-        setStage("done");
-        return;
-      }
-      // Nothing is created yet — hand off to the Reconcile screen where the
-      // human reviews every proposed account and explicitly confirms.
-      router.push(`/companies/${companyId}/journal-entries/new/review/${outcome.documentId}`);
+      await handleOutcome(outcome);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Smart Import failed. Please try again.");
       setStage("done");
+    }
+  }
+
+  async function handleOutcome(outcome: SmartImportOutcome) {
+    if (!outcome.ok) {
+      if (outcome.needsClassification && outcome.documentId) {
+        // Don't just tell the user to go classify it elsewhere — let them
+        // do it right here and resume Smart Import automatically.
+        setClassifyDocId(outcome.documentId);
+        setClassifyError(null);
+        setStage("done");
+        return;
+      }
+      setError(outcome.error);
+      setStage("done");
+      return;
+    }
+    if (!outcome.candidateCount) {
+      setEmptyResult(outcome);
+      setStage("done");
+      return;
+    }
+    // Nothing is created yet — hand off to the Reconcile screen where the
+    // human reviews every proposed account and explicitly confirms.
+    router.push(`/companies/${companyId}/journal-entries/new/review/${outcome.documentId}`);
+  }
+
+  async function confirmClassification() {
+    if (!classifyDocId) return;
+    setClassifying(true);
+    setClassifyError(null);
+    try {
+      const corrected = await correctDocumentClassificationAction(companyId, classifyDocId, selectedType);
+      if (!corrected.ok) {
+        setClassifyError(corrected.error);
+        return;
+      }
+      const docId = classifyDocId;
+      setClassifyDocId(null);
+      setStage("processing");
+      const outcome = await smartImportFromDocumentIdAction(companyId, docId, guidance || undefined, proposeAccounts);
+      await handleOutcome(outcome);
+    } catch (e) {
+      setClassifyError(e instanceof Error ? e.message : "Could not save the document type. Please try again.");
+    } finally {
+      setClassifying(false);
     }
   }
 
@@ -111,6 +166,8 @@ export function SmartImportPanel({
     setProgress(0);
     setError(null);
     setEmptyResult(null);
+    setClassifyDocId(null);
+    setClassifyError(null);
     if (input.current) input.current.value = "";
   }
 
@@ -229,6 +286,52 @@ export function SmartImportPanel({
           </div>
           <div className="flex justify-end">
             <Button variant="outline" size="sm" type="button" onClick={reset}>Import another file</Button>
+          </div>
+        </div>
+      ) : null}
+
+      {classifyDocId ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 p-4">
+          <div className="w-full max-w-sm rounded-lg border border-ink-100 bg-white p-5 shadow-lg">
+            <h3 className="font-display text-sm font-semibold text-ink-900">What kind of document is this?</h3>
+            <p className="mt-1 text-xs text-ink-500">
+              We couldn&apos;t tell from the file name alone. Pick the type below to continue — Smart Import will
+              pick back up automatically.
+            </p>
+
+            <div className="mt-3 max-h-64 space-y-1 overflow-y-auto pr-1">
+              {DOC_TYPE_OPTIONS.map((opt) => (
+                <label
+                  key={opt.value}
+                  className="flex items-center gap-2 rounded-md border border-ink-100 px-3 py-2 text-sm hover:bg-surface-subtle"
+                >
+                  <input
+                    type="radio"
+                    name="doc-type"
+                    value={opt.value}
+                    checked={selectedType === opt.value}
+                    onChange={() => setSelectedType(opt.value)}
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+
+            {classifyError ? (
+              <div className="mt-3 flex items-start gap-2 rounded-md border border-negative/20 bg-negative/5 px-3 py-2 text-xs text-ink-700" role="alert">
+                <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-negative" />
+                <span>{classifyError}</span>
+              </div>
+            ) : null}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="ghost" size="sm" type="button" disabled={classifying} onClick={() => { setClassifyDocId(null); reset(); }}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="sm" type="button" disabled={classifying} onClick={() => void confirmClassification()}>
+                {classifying ? "Saving…" : "Confirm & continue"}
+              </Button>
+            </div>
           </div>
         </div>
       ) : null}
