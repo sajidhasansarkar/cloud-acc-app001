@@ -1,9 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { upload } from "@vercel/blob/client";
-import { FileUp, UploadCloud, Sparkles, XCircle, CheckCircle2, AlertTriangle, ArrowUpRight } from "lucide-react";
+import { FileUp, UploadCloud, Sparkles, XCircle } from "lucide-react";
 import {
   DOCUMENT_ACCEPT,
   MAX_DOCUMENT_SIZE,
@@ -11,7 +11,6 @@ import {
   getDocumentFileType,
 } from "@/documents/config";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/components/ui/toast";
 import { smartImportFromBlobAction, smartImportFromDocumentIdAction } from "@/actions/smart-import";
 import type { SmartImportOutcome } from "@/documents/smart-import";
 
@@ -24,15 +23,15 @@ export function SmartImportPanel({
   companyId: string;
   storageProvider: "local" | "vercel-blob";
 }) {
+  const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [guidance, setGuidance] = useState("");
+  const [proposeAccounts, setProposeAccounts] = useState(true);
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<SmartImportOutcome | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const { toast } = useToast();
+  const [emptyResult, setEmptyResult] = useState<SmartImportOutcome | null>(null);
 
   function validate(candidate: File) {
     const type = getDocumentFileType(candidate.name);
@@ -44,7 +43,7 @@ export function SmartImportPanel({
 
   function pick(files: FileList | File[]) {
     setError(null);
-    setResult(null);
+    setEmptyResult(null);
     const picked = Array.from(files)[0];
     if (!picked) return;
     const invalid = validate(picked);
@@ -64,7 +63,7 @@ export function SmartImportPanel({
       onUploadProgress: ({ percentage }) => setProgress(Math.round(percentage)),
     });
     setStage("processing");
-    return smartImportFromBlobAction(companyId, blob.pathname, candidate.name, candidate.type || "application/octet-stream", guidance || undefined);
+    return smartImportFromBlobAction(companyId, blob.pathname, candidate.name, candidate.type || "application/octet-stream", guidance || undefined, proposeAccounts);
   }
 
   async function runViaLocal(candidate: File) {
@@ -75,28 +74,32 @@ export function SmartImportPanel({
     if (!response.ok || !data.ok || !data.document) throw new Error(data.error || "Upload failed. Please try again.");
     setProgress(100);
     setStage("processing");
-    return smartImportFromDocumentIdAction(companyId, data.document.id, guidance || undefined);
+    return smartImportFromDocumentIdAction(companyId, data.document.id, guidance || undefined, proposeAccounts);
   }
 
   async function run() {
     if (!file) return;
     setError(null);
-    setResult(null);
+    setEmptyResult(null);
     setProgress(0);
     setStage("uploading");
     try {
       const outcome = storageProvider === "vercel-blob" ? await runViaBlob(file) : await runViaLocal(file);
-      setResult(outcome);
       if (!outcome.ok) {
         setError(outcome.error);
-      } else if (outcome.created.length) {
-        toast(`${outcome.created.length} journal entr${outcome.created.length === 1 ? "y" : "ies"} created from ${outcome.documentName}.`, "success");
-      } else if (outcome.candidateCount === 0) {
-        toast("No transactions were found in this document.", "error");
+        setStage("done");
+        return;
       }
+      if (!outcome.candidateCount) {
+        setEmptyResult(outcome);
+        setStage("done");
+        return;
+      }
+      // Nothing is created yet — hand off to the Reconcile screen where the
+      // human reviews every proposed account and explicitly confirms.
+      router.push(`/companies/${companyId}/journal-entries/new/review/${outcome.documentId}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Smart Import failed. Please try again.");
-    } finally {
       setStage("done");
     }
   }
@@ -107,7 +110,7 @@ export function SmartImportPanel({
     setStage("idle");
     setProgress(0);
     setError(null);
-    setResult(null);
+    setEmptyResult(null);
     if (input.current) input.current.value = "";
   }
 
@@ -120,18 +123,17 @@ export function SmartImportPanel({
         <div>
           <h2 className="font-display text-sm font-semibold text-ink-900">Smart Import</h2>
           <p className="mt-1 text-xs text-ink-500">
-            Upload a bank statement, invoice, bill, or receipt — AI reads it and creates a draft journal entry for
-            each transaction. You can edit, add, or delete lines afterwards like any other journal entry.
+            Upload a bank statement, invoice, bill, or receipt. We&apos;ll read it and, on the next screen, you can review
+            and confirm every proposed journal entry before anything is created — nothing posts until you do.
           </p>
         </div>
       </div>
 
       {!file ? (
         <div
-          className={`rounded-lg border-2 border-dashed p-6 text-center transition-colors ${dragging ? "border-ledger-500 bg-ledger-500/5" : "border-ink-200 bg-surface-subtle"}`}
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => { e.preventDefault(); setDragging(false); pick(e.dataTransfer.files); }}
+          className="rounded-lg border-2 border-dashed border-ink-200 bg-surface-subtle p-6 text-center transition-colors"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => { e.preventDefault(); pick(e.dataTransfer.files); }}
         >
           <UploadCloud className="mx-auto h-8 w-8 text-ink-400" />
           <p className="mt-2 text-sm font-medium text-ink-800">Drag & drop a statement or document</p>
@@ -157,23 +159,41 @@ export function SmartImportPanel({
           </div>
 
           {stage === "idle" ? (
-            <div>
-              <label className="text-xs font-medium text-ink-700">Guide the AI (optional)</label>
-              <textarea
-                value={guidance}
-                onChange={(e) => setGuidance(e.target.value)}
-                placeholder='e.g. "This is our HSBC checking account statement — the far right column is the running balance, ignore it."'
-                rows={3}
-                className="mt-1 w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm"
-              />
-              <p className="mt-1 text-xs text-ink-500">Works fine without guidance too — this just helps with ambiguous documents.</p>
+            <div className="space-y-3">
+              <label className="flex items-start gap-2 rounded-md border border-ink-100 bg-surface-subtle p-3 text-xs">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={proposeAccounts}
+                  onChange={(e) => setProposeAccounts(e.target.checked)}
+                />
+                <span>
+                  <span className="block font-medium text-ink-800">Propose accounts &amp; journal types</span>
+                  <span className="mt-0.5 block text-ink-500">
+                    After staging, AI suggests debit/credit accounts per row. You confirm everything on the next
+                    (Reconcile) screen — nothing posts until you do.
+                  </span>
+                </span>
+              </label>
+
+              <div>
+                <label className="text-xs font-medium text-ink-700">Operator note (optional)</label>
+                <textarea
+                  value={guidance}
+                  onChange={(e) => setGuidance(e.target.value)}
+                  placeholder='e.g. "Ignore the running balance column" or "This is our HSBC checking account statement — the far right column is the running balance, ignore it."'
+                  rows={3}
+                  className="mt-1 w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm"
+                />
+                <p className="mt-1 text-xs text-ink-500">Works fine without a note too — this just helps with ambiguous documents.</p>
+              </div>
             </div>
           ) : null}
 
           {busy ? (
             <div>
               <div className="flex items-center justify-between text-xs text-ink-500">
-                <span>{stage === "uploading" ? "Uploading…" : "AI is reading the document and building journal entries…"}</span>
+                <span>{stage === "uploading" ? "Uploading…" : "AI is reading the document and staging transactions…"}</span>
                 {stage === "uploading" ? <span>{progress}%</span> : null}
               </div>
               <div className="mt-1 h-2 overflow-hidden rounded-full bg-ink-100">
@@ -202,59 +222,11 @@ export function SmartImportPanel({
         </div>
       ) : null}
 
-      {result?.ok && stage === "done" ? (
+      {emptyResult?.ok && !emptyResult.candidateCount ? (
         <div className="space-y-3">
-          {result.created.length ? (
-            <div className="rounded-lg border border-ink-100 bg-white p-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-                <CheckCircle2 className="h-4 w-4 text-positive" />
-                {result.created.length} draft journal entr{result.created.length === 1 ? "y" : "ies"} created
-              </div>
-              <ul className="mt-3 divide-y divide-ink-100">
-                {result.created.map((entry) => (
-                  <li key={entry.journalEntryId} className="flex items-center justify-between gap-3 py-2 text-sm">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-ink-800">{entry.description || entry.entryNumber}</p>
-                      <p className="text-xs text-ink-500">{entry.entryNumber} · {new Date(entry.entryDate).toISOString().slice(0, 10)} · {entry.amount}</p>
-                    </div>
-                    <Link
-                      href={`/companies/${companyId}/journal-entries/${entry.journalEntryId}/edit`}
-                      className="inline-flex shrink-0 items-center gap-1 text-ledger-600 underline"
-                    >
-                      Edit <ArrowUpRight className="h-3.5 w-3.5" />
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {result.needsAttention.length ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-                <AlertTriangle className="h-4 w-4 text-amber-600" />
-                {result.needsAttention.length} transaction{result.needsAttention.length === 1 ? "" : "s"} need attention
-              </div>
-              <ul className="mt-3 space-y-2">
-                {result.needsAttention.map((item) => (
-                  <li key={item.candidateId} className="text-sm">
-                    <p className="font-medium text-ink-800">{item.description || "Untitled transaction"}{item.amount ? ` · ${item.amount}` : ""}</p>
-                    <p className="text-xs text-ink-600">{item.reason}</p>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-2 text-xs text-ink-500">
-                These weren&apos;t created automatically to avoid guessing. You can create them manually on this page instead.
-              </p>
-            </div>
-          ) : null}
-
-          {!result.candidateCount ? (
-            <div className="rounded-lg border border-ink-100 bg-surface-subtle p-4 text-sm text-ink-600">
-              No transactions were found in this document.
-            </div>
-          ) : null}
-
+          <div className="rounded-lg border border-ink-100 bg-surface-subtle p-4 text-sm text-ink-600">
+            No transactions were found in this document.
+          </div>
           <div className="flex justify-end">
             <Button variant="outline" size="sm" type="button" onClick={reset}>Import another file</Button>
           </div>

@@ -275,6 +275,39 @@ export async function acceptAccountingAISuggestion(organizationId: string, compa
   });
 }
 
+/**
+ * Accept an AI suggestion for Draft Journal Entry creation, optionally
+ * overriding the account/amount the AI proposed — e.g. from a bulk
+ * "Reconcile"/Smart Import confirmation screen where a human picked a
+ * different account for a row before confirming.
+ *
+ * This exists because `acceptAccountingAISuggestion` always records the
+ * AI's own values verbatim, while `editAccountingAISuggestion` records a
+ * decision of "EDITED" (not "ACCEPTED") — and
+ * `createDraftJournalEntryFromSuggestion` only proceeds when the decision
+ * is "ACCEPTED". Without this, a human who corrected the proposed account
+ * would have no way to actually get a Draft Journal Entry out of it in a
+ * single confirmation step.
+ */
+export async function confirmAccountingAISuggestion(
+  organizationId: string,
+  companyId: string,
+  documentId: string,
+  candidateId: string,
+  userId: string,
+  overrides?: { accountId?: string | null; debit?: string | null; credit?: string | null; amount?: string | null; notes?: string | null }
+) {
+  const latest = await prisma.aIReviewSuggestion.findFirst({ where: { candidateId }, orderBy: { createdAt: "desc" } });
+  if (!latest) return { ok: false as const, error: "No AI suggestion is available for review." };
+  return recordHumanDecision(organizationId, companyId, documentId, candidateId, userId, "ACCEPTED", {
+    accountId: overrides?.accountId !== undefined ? overrides.accountId : latest.suggestedAccountId,
+    debit: overrides?.debit !== undefined ? overrides.debit : latest.suggestedDebit?.toString(),
+    credit: overrides?.credit !== undefined ? overrides.credit : latest.suggestedCredit?.toString(),
+    amount: overrides?.amount !== undefined ? overrides.amount : latest.suggestedAmount?.toString(),
+    notes: overrides?.notes ?? null,
+  });
+}
+
 export async function rejectAccountingAISuggestion(organizationId: string, companyId: string, documentId: string, candidateId: string, userId: string, notes?: string | null) {
   return recordHumanDecision(organizationId, companyId, documentId, candidateId, userId, "REJECTED", { notes });
 }
