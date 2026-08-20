@@ -224,12 +224,14 @@ export default async function JournalEntryDetailPage({
               <Field
                 label="Source Document"
                 value={
-                  <Link
-                    href={`/companies/${company.id}/documents/${entry.sourceDocument.id}`}
+                  <a
+                    href={`/api/companies/${company.id}/documents/${entry.sourceDocument.id}/file`}
+                    target="_blank"
+                    rel="noreferrer"
                     className="text-ink-900 underline"
                   >
                     {entry.sourceDocument.originalFileName}
-                  </Link>
+                  </a>
                 }
               />
             ) : null}

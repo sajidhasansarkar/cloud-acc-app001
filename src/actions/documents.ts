@@ -60,12 +60,12 @@ export async function extractDocumentContentAction(companyId: string, documentId
 // pipeline that was, in effect, a dead end. This is the missing manual
 // trigger (extraction now also calls it automatically on success, see
 // src/documents/processing.ts).
-export async function runDocumentAIExtractionAction(companyId: string, documentId: string) {
+export async function runDocumentAIExtractionAction(companyId: string, documentId: string, guidance?: string) {
   const { role, organization, user } = await requireActiveOrganization();
   if (!canManageDocuments(role)) return { ok: false as const, error: "You don't have permission to process documents." };
   const company = await getOwnedCompany(organization.id, companyId);
   if (!company) return { ok: false as const, error: "Company not found." };
-  const result = await normalizeDocument(organization.id, company.id, documentId, user.id);
+  const result = await normalizeDocument(organization.id, company.id, documentId, user.id, guidance);
   revalidatePath(`/companies/${company.id}/documents/${documentId}`);
   if ("error" in result) return { ok: false as const, error: result.error };
   return { ok: true as const, ...result };

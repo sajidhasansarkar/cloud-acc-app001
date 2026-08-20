@@ -11,6 +11,9 @@ import { canManageJournalEntries } from "@/lib/rbac";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { JournalEntryForm } from "@/components/journal-entries/journal-entry-form";
+import { JournalEntryCreateTabs } from "@/components/journal-entries/journal-entry-create-tabs";
+import { SmartImportPanel } from "@/components/journal-entries/smart-import-panel";
+import { DOCUMENT_STORAGE_PROVIDER } from "@/documents/config";
 
 export const metadata = { title: "New Journal Entry — Ledger" };
 
@@ -90,16 +93,21 @@ export default async function NewJournalEntryPage({
       </div>
 
       <div className="rounded-lg border border-ink-100 bg-white p-6 shadow-card">
-        <JournalEntryForm
-          mode="create"
-          companyId={company.id}
-          fiscalYears={fiscalYears}
-          initialPeriods={initialPeriods}
-          defaultFiscalYearId={defaultFiscalYearId}
-          defaultAccountingPeriodId={defaultAccountingPeriodId}
-          cancelHref={basePath}
-          accounts={accounts ?? []}
-          taxCodes={(taxCodes ?? []).map((tax) => ({ id: tax.id, code: tax.code, name: tax.name, isActive: tax.isActive }))}
+        <JournalEntryCreateTabs
+          smartImport={<SmartImportPanel companyId={company.id} storageProvider={DOCUMENT_STORAGE_PROVIDER} />}
+          manual={
+            <JournalEntryForm
+              mode="create"
+              companyId={company.id}
+              fiscalYears={fiscalYears}
+              initialPeriods={initialPeriods}
+              defaultFiscalYearId={defaultFiscalYearId}
+              defaultAccountingPeriodId={defaultAccountingPeriodId}
+              cancelHref={basePath}
+              accounts={accounts ?? []}
+              taxCodes={(taxCodes ?? []).map((tax) => ({ id: tax.id, code: tax.code, name: tax.name, isActive: tax.isActive }))}
+            />
+          }
         />
       </div>
     </div>

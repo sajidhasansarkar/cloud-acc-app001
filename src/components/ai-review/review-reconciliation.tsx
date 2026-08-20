@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
-import { CheckCircle2, AlertTriangle, ExternalLink, Pencil, FileText } from "lucide-react";
+import { CheckCircle2, AlertTriangle, ExternalLink, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -69,9 +69,6 @@ export function ReviewReconciliation({ data }: { data: ReviewData }) {
           </div>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-          <Link href={`/companies/${company.id}/documents/${candidate.documentId}`} className="inline-flex">
-            <Button variant="outline"><FileText className="h-4 w-4" />Source Document</Button>
-          </Link>
           <a
             href={`/api/companies/${company.id}/documents/${candidate.documentId}/file`}
             target="_blank"

@@ -41,7 +41,7 @@ async function extractionResult(documentId: string) {
   return prisma.documentProcessingResult.findUnique({ where: { documentId } });
 }
 
-export async function extractOwnedDocumentContent(organizationId: string, companyId: string, documentId: string, userId: string, force = false): Promise<DocumentProcessingResult> {
+export async function extractOwnedDocumentContent(organizationId: string, companyId: string, documentId: string, userId: string, force = false, guidance?: string): Promise<DocumentProcessingResult> {
   const document = await getOwnedDocument(organizationId, companyId, documentId);
   if (!document) return { documentId, status: "FAILED", fileType: "PDF", metadata: { requiresOcr: false }, warnings: [], error: "Document not found." };
   if (document.documentStatus === "ARCHIVED") return { documentId, status: "FAILED", fileType: document.fileType, metadata: { requiresOcr: false }, warnings: [], error: "Archived documents cannot be extracted." };
@@ -99,7 +99,7 @@ export async function extractOwnedDocumentContent(organizationId: string, compan
     // extraction call itself look like it failed. The UI surfaces normalization
     // status/errors separately (see aiUnderstandingError / normalizedCandidates).
     try {
-      await normalizeDocument(organizationId, companyId, document.id, userId);
+      await normalizeDocument(organizationId, companyId, document.id, userId, guidance);
     } catch (normalizationError) {
       console.error("Post-extraction normalization failed", normalizationError);
     }

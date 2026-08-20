@@ -218,3 +218,38 @@ Implemented the metadata-only classification foundation. Uploaded documents are 
 - Manual correction is restricted to classifications that require review and is audited.
 - Classification is idempotent; explicit reclassification is supported.
 - Audit actions: `DOCUMENT_CLASSIFICATION_STARTED`, `DOCUMENT_CLASSIFIED`, `DOCUMENT_CLASSIFICATION_FAILED`, `DOCUMENT_CLASSIFICATION_CORRECTED`.
+
+## Phase 5A-9b — Smart Import (Journal Entries)
+
+Removed the standalone Documents page/route. Uploading a document is now only
+possible from **Journal Entries → New → Smart Import**, and it goes straight
+to editable Draft Journal Entries — no separate document review screen.
+
+- `src/documents/smart-import.ts` (`runSmartImport`) orchestrates the
+  existing pipeline end-to-end: content extraction → AI normalization
+  (`normalizeDocument`) → AI account suggestion
+  (`generateAccountingAISuggestion`) → auto-accept
+  (`acceptAccountingAISuggestion`) → Draft Journal Entry
+  (`createDraftJournalEntryFromSuggestion`). None of those steps were
+  reimplemented — this only chains calls that already existed.
+- One Draft Journal Entry is created per transaction found in the document
+  (not one merged entry per statement), matching normal bookkeeping. Each
+  created entry keeps its usual `sourceDocument` / `transactionCandidate` /
+  `aiSuggestion` traceability links and is fully editable afterwards (add,
+  edit, or delete lines) on the same Journal Entry edit screen as a manually
+  created entry.
+- A transaction that needs a human decision the pipeline already refuses to
+  make silently (missing/low-confidence date, foreign currency, low-
+  confidence account match, possible duplicate) is reported back in a
+  "needs attention" list instead of being force-created or dropped.
+- `runSmartImport` accepts optional free-text `guidance` from the uploader
+  (e.g. "this is our HSBC checking account statement"), threaded into the
+  OpenAI document-understanding prompt as advisory context — it can steer
+  interpretation but is explicitly instructed to never override the
+  anti-hallucination rules. Smart Import also works with no guidance at all.
+- The Documents page, its route, and its now-unused page-only components
+  (`document-details`, `documents-table`, etc.) were deleted. The underlying
+  document/classification/extraction/storage backend, API routes, and the
+  AI Review queue (`/companies/[companyId]/ai-review`) are unchanged and
+  still used under the hood / for audit visibility.
+

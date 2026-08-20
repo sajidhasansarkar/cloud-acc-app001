@@ -10,7 +10,6 @@ import {
   ReceiptText,
   Bot,
   Settings,
-  FileArchive,
   ClipboardCheck,
 } from "lucide-react";
 
@@ -34,7 +33,6 @@ export const COMPANY_NAV_ITEMS: CompanyNavItem[] = [
   { label: "Overview", segment: "", icon: LayoutDashboard, implemented: true },
   { label: "Transactions", segment: "transactions", icon: ArrowLeftRight, implemented: false },
   { label: "Journal Entries", segment: "journal-entries", icon: BookText, implemented: true },
-  { label: "Documents", segment: "documents", icon: FileArchive, implemented: true },
   { label: "AI Review", segment: "ai-review", icon: ClipboardCheck, implemented: true },
   { label: "Banking", segment: "banking", icon: Landmark, implemented: false },
   { label: "Chart of Accounts", segment: "chart-of-accounts", icon: ListTree, implemented: true },

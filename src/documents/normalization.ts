@@ -184,7 +184,7 @@ async function audit(organizationId: string, companyId: string, documentId: stri
   }
 }
 
-export async function normalizeDocument(organizationId: string, companyId: string, documentId: string, userId?: string): Promise<NormalizationResult | { error: string }> {
+export async function normalizeDocument(organizationId: string, companyId: string, documentId: string, userId?: string, guidance?: string): Promise<NormalizationResult | { error: string }> {
   const document = await getOwnedDocumentDetails(organizationId, companyId, documentId);
   if (!document) return { error: "Document not found." };
   if (document.documentStatus !== "COMPLETED" || !document.processingResult?.extractedContentReference) return { error: "Document must be successfully processed before normalization." };
@@ -236,6 +236,7 @@ export async function normalizeDocument(organizationId: string, companyId: strin
           companyCurrency: company.currency,
           knownDocumentType: document.classification?.documentType,
           image: imagePayload,
+          guidance,
         });
         candidates = result.transactions;
         sourceRowCount = candidates.length;
