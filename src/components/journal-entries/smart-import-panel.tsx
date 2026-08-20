@@ -299,8 +299,24 @@ export function SmartImportPanel({
 
       {emptyResult?.ok && !emptyResult.candidateCount ? (
         <div className="space-y-3">
-          <div className="rounded-lg border border-ink-100 bg-surface-subtle p-4 text-sm text-ink-600">
-            No transactions were found in this document.
+          <div className="space-y-2 rounded-lg border border-ink-100 bg-surface-subtle p-4 text-sm text-ink-600">
+            <p>No transactions were found in this document.</p>
+            {emptyResult.diagnostics?.aiReasoning ? (
+              <p className="text-xs text-ink-500"><span className="font-medium text-ink-700">AI reasoning: </span>{emptyResult.diagnostics.aiReasoning}</p>
+            ) : null}
+            {emptyResult.diagnostics?.aiUnderstandingError ? (
+              <p className="text-xs text-negative">AI document understanding error: {emptyResult.diagnostics.aiUnderstandingError}</p>
+            ) : null}
+            {emptyResult.diagnostics?.extractionWarnings.length ? (
+              <ul className="list-disc space-y-0.5 pl-4 text-xs text-ink-500">
+                {emptyResult.diagnostics.extractionWarnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            ) : null}
+            {emptyResult.diagnostics?.aiFindings.length ? (
+              <ul className="list-disc space-y-0.5 pl-4 text-xs text-ink-500">
+                {emptyResult.diagnostics.aiFindings.map((f, i) => <li key={i}>{f.message}</li>)}
+              </ul>
+            ) : null}
           </div>
           <div className="flex justify-end">
             <Button variant="outline" size="sm" type="button" onClick={reset}>Import another file</Button>

@@ -5,6 +5,8 @@ import { classifyOwnedAccountingDocument, classificationNeedsReview } from "@/do
 import { listOwnedCandidates } from "@/documents/normalization";
 import { generateAccountingAISuggestion, confirmAccountingAISuggestion } from "@/ai/review";
 import { createDraftJournalEntryFromSuggestion } from "@/accounting/journal-entry-drafts";
+import { getDocumentStorage } from "@/storage/document-storage";
+import type { DocumentAIUnderstandingResult } from "@/documents/ai-extraction";
 
 /**
  * Smart Import — bridge from "just uploaded a file" to a reviewable set of
@@ -55,6 +57,15 @@ export type SmartImportOutcome = {
   documentName: string;
   candidateCount: number;
   staged: SmartImportStagedCandidate[];
+  /** Only populated when candidateCount is 0 — the actual reason nothing was
+   *  found (extraction warnings, AI reasoning/findings), so "no transactions
+   *  found" isn't a dead end the user has to guess about. */
+  diagnostics?: {
+    extractionWarnings: string[];
+    aiUnderstandingError: string | null;
+    aiReasoning: string | null;
+    aiFindings: { code: string; message: string; severity: string }[];
+  };
 } | {
   ok: false;
   error: string;
@@ -113,7 +124,8 @@ export async function runSmartImport(
 
   const candidates = await listOwnedCandidates(organizationId, company.id, documentId);
   if (!candidates.length) {
-    return { ok: true, documentId, documentName: document.originalFileName, candidateCount: 0, staged: [] };
+    const diagnostics = await buildEmptyResultDiagnostics(documentId);
+    return { ok: true, documentId, documentName: document.originalFileName, candidateCount: 0, staged: [], diagnostics };
   }
 
   const staged: SmartImportStagedCandidate[] = [];
@@ -174,6 +186,36 @@ export async function runSmartImport(
     candidateCount: candidates.length,
     staged,
   };
+}
+
+/**
+ * When Smart Import stages zero candidates, "No transactions were found in
+ * this document." alone gives the user nothing to act on — was it a scanned
+ * PDF with no OCR? A statement-type document with no dated line items? The
+ * AI legitimately finding nothing? This pulls the real extraction warnings
+ * and (if AI document-understanding ran) its stated reasoning/findings so
+ * the empty result is explainable instead of a dead end.
+ */
+async function buildEmptyResultDiagnostics(documentId: string) {
+  const result = await prisma.documentProcessingResult.findUnique({
+    where: { documentId },
+    select: { warnings: true, aiUnderstandingError: true, aiUnderstandingReference: true },
+  });
+  const extractionWarnings = Array.isArray(result?.warnings) ? result.warnings.map(String) : [];
+  let aiReasoning: string | null = null;
+  let aiFindings: { code: string; message: string; severity: string }[] = [];
+  if (result?.aiUnderstandingReference) {
+    try {
+      const raw = await getDocumentStorage().read(result.aiUnderstandingReference);
+      const understanding = JSON.parse(raw.toString("utf8")) as DocumentAIUnderstandingResult;
+      aiReasoning = understanding.reasoning || null;
+      aiFindings = understanding.findings ?? [];
+    } catch {
+      // Best-effort only — an unreadable diagnostics blob shouldn't block
+      // showing the (already successful) empty-result outcome.
+    }
+  }
+  return { extractionWarnings, aiUnderstandingError: result?.aiUnderstandingError ?? null, aiReasoning, aiFindings };
 }
 
 /**

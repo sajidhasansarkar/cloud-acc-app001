@@ -106,10 +106,31 @@ export async function extractOwnedDocumentContent(organizationId: string, compan
     // best-effort — a normalization/AI failure must not make the (successful)
     // extraction call itself look like it failed. The UI surfaces normalization
     // status/errors separately (see aiUnderstandingError / normalizedCandidates).
+    //
+    // BUG FIX: this used to only console.error() on a normalizeDocument
+    // crash, leaving aiUnderstandingError/warnings untouched in the DB. Smart
+    // Import's empty-result diagnostics (buildEmptyResultDiagnostics) reads
+    // exactly those fields, so a mid-normalization crash (OpenAI call throws
+    // after extraction succeeded, storage write fails, etc.) produced a
+    // completely blank "No transactions were found" with zero explanation —
+    // indistinguishable from the AI legitimately finding nothing. Persist the
+    // real error so it surfaces in the UI instead of only in server logs.
     try {
-      await normalizeDocument(organizationId, companyId, document.id, userId, guidance);
+      const normalization = await normalizeDocument(organizationId, companyId, document.id, userId, guidance);
+      if (normalization && "error" in normalization) {
+        console.error("Post-extraction normalization returned an error", normalization.error);
+        await prisma.documentProcessingResult.update({
+          where: { documentId: document.id },
+          data: { aiUnderstandingError: normalization.error, aiUnderstandingProcessedAt: new Date() },
+        }).catch(() => undefined);
+      }
     } catch (normalizationError) {
+      const message = normalizationError instanceof Error ? normalizationError.message : "Normalization failed unexpectedly.";
       console.error("Post-extraction normalization failed", normalizationError);
+      await prisma.documentProcessingResult.update({
+        where: { documentId: document.id },
+        data: { aiUnderstandingError: `Normalization crashed: ${message}`, aiUnderstandingProcessedAt: new Date() },
+      }).catch(() => undefined);
     }
 
     return { documentId, status, fileType: document.fileType, metadata: { pageCount: extracted.pageCount, sheetCount: extracted.sheetCount, tableCount: extracted.tableCount, rowCount: extracted.rowCount, columnCount: extracted.columnCount, textBlockCount: extracted.textBlockCount, requiresOcr: Boolean(extracted.requiresOcr) }, warnings, extractedContentReference: reference, processedAt: new Date() };
