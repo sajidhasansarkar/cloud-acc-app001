@@ -238,6 +238,14 @@ export async function getSmartImportReviewData(organizationId: string, companyId
               warnings: Array.isArray(suggestion.warnings) ? suggestion.warnings.map(String) : [],
             }
           : null,
+        // No stored suggestion usually means either it was never requested
+        // (possible duplicate, or "propose accounts" was off) or generation
+        // failed (AIReviewRecord.status === "FAILED"). Only surface an error
+        // string in the latter case so the Reconcile screen can tell the
+        // human "AI couldn't do this one" apart from "wasn't asked to".
+        suggestionError: !suggestion && candidate.aiReviewStatus === "FAILED"
+          ? "AI could not propose an account for this transaction. Pick one manually."
+          : null,
       };
     }),
   };
