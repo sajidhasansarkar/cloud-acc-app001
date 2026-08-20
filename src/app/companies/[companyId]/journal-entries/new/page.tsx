@@ -14,6 +14,8 @@ import { JournalEntryForm } from "@/components/journal-entries/journal-entry-for
 import { JournalEntryCreateTabs } from "@/components/journal-entries/journal-entry-create-tabs";
 import { SmartImportPanel } from "@/components/journal-entries/smart-import-panel";
 import { DOCUMENT_STORAGE_PROVIDER } from "@/documents/config";
+import { DOCUMENT_AI_PROVIDER } from "@/documents/ai-extraction";
+import { ACCOUNTING_AI_PROVIDER } from "@/ai/provider";
 
 export const metadata = { title: "New Journal Entry — Ledger" };
 
@@ -94,7 +96,13 @@ export default async function NewJournalEntryPage({
 
       <div className="rounded-lg border border-ink-100 bg-white p-6 shadow-card">
         <JournalEntryCreateTabs
-          smartImport={<SmartImportPanel companyId={company.id} storageProvider={DOCUMENT_STORAGE_PROVIDER} />}
+          smartImport={
+            <SmartImportPanel
+              companyId={company.id}
+              storageProvider={DOCUMENT_STORAGE_PROVIDER}
+              aiConfigured={DOCUMENT_AI_PROVIDER === "openai" && ACCOUNTING_AI_PROVIDER === "openai"}
+            />
+          }
           manual={
             <JournalEntryForm
               mode="create"

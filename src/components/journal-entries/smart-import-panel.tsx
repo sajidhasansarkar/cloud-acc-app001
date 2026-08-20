@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { upload } from "@vercel/blob/client";
-import { FileUp, UploadCloud, Sparkles, XCircle } from "lucide-react";
+import { FileUp, UploadCloud, Sparkles, XCircle, AlertTriangle } from "lucide-react";
 import {
   DOCUMENT_ACCEPT,
   MAX_DOCUMENT_SIZE,
@@ -36,9 +36,15 @@ const DOC_TYPE_OPTIONS: { value: AccountingDocumentType; label: string }[] = [
 export function SmartImportPanel({
   companyId,
   storageProvider,
+  aiConfigured,
 }: {
   companyId: string;
   storageProvider: "local" | "vercel-blob";
+  /** True only when both DOCUMENT_AI_PROVIDER and ACCOUNTING_AI_PROVIDER are
+   *  "openai". When false, extraction/account-suggestion silently fall back
+   *  to basic pattern-matching heuristics — accurate-looking but often wrong
+   *  for real statements, so the user needs to know before they trust it. */
+  aiConfigured: boolean;
 }) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
@@ -185,6 +191,18 @@ export function SmartImportPanel({
           </p>
         </div>
       </div>
+
+      {!aiConfigured ? (
+        <div className="flex items-start gap-2 rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+          <span>
+            AI document reading isn&apos;t fully configured (DOCUMENT_AI_PROVIDER / ACCOUNTING_AI_PROVIDER must both be
+            <code className="mx-1 rounded bg-amber-100 px-1">openai</code>
+            in your deployment environment). Falling back to basic pattern-matching — results on real statements may
+            be inaccurate or incomplete. Review everything carefully on the next screen before confirming.
+          </span>
+        </div>
+      ) : null}
 
       {!file ? (
         <div

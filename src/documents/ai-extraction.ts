@@ -26,7 +26,7 @@ import { ACCOUNTING_DOCUMENT_TYPE_LABELS } from "@/documents/classification-conf
  *    "OpenAI AI processing is not configured." (never a fake success).
  */
 
-export const DOCUMENT_AI_PROVIDER = process.env.DOCUMENT_AI_PROVIDER || "heuristic";
+export const DOCUMENT_AI_PROVIDER = (process.env.DOCUMENT_AI_PROVIDER || "heuristic").trim().toLowerCase();
 export const DOCUMENT_AI_MODEL = process.env.DOCUMENT_AI_MODEL || (DOCUMENT_AI_PROVIDER === "openai" ? "gpt-4o-mini" : "document-ai-heuristic-v1");
 // Vision needs a multimodal model. Kept separate so DOCUMENT_AI_MODEL can be
 // overridden for text-only calls without breaking image understanding.

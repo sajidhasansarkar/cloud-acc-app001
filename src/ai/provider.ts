@@ -2,10 +2,10 @@ import OpenAI from "openai";
 import type { NormalizationConfidence } from "@prisma/client";
 import type { AIReviewPayload } from "@/ai/context";
 
-export const ACCOUNTING_AI_PROVIDER = process.env.ACCOUNTING_AI_PROVIDER || "heuristic";
+export const ACCOUNTING_AI_PROVIDER = (process.env.ACCOUNTING_AI_PROVIDER || "heuristic").trim().toLowerCase();
 export const ACCOUNTING_AI_MODEL =
   process.env.ACCOUNTING_AI_MODEL ||
-  (process.env.ACCOUNTING_AI_PROVIDER === "openai" ? "gpt-4o-mini" : "accounting-review-v1");
+  (ACCOUNTING_AI_PROVIDER === "openai" ? "gpt-4o-mini" : "accounting-review-v1");
 export const ACCOUNTING_REVIEW_VERSION = "accounting-review-v1";
 
 export type AccountingAISuggestion = {
