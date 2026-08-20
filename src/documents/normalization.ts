@@ -279,7 +279,16 @@ export async function normalizeDocument(organizationId: string, companyId: strin
         await audit(organizationId, companyId, document.id, auditUserId, "AI_DOCUMENT_UNDERSTANDING_COMPLETED", { documentType: result.documentType, confidence: result.confidence, transactionCount: candidates.length, statementFindingCount: result.statementFindings.length, findingCount: result.findings.length });
       } catch (error) {
         const configured = !(error instanceof DocumentAINotConfiguredError);
-        const message = error instanceof DocumentAINotConfiguredError ? error.message : "OpenAI document understanding failed. Please retry.";
+        // BUG FIX: this used to always collapse any real failure into the
+        // generic "OpenAI document understanding failed. Please retry." —
+        // discarding the actual OpenAI SDK error (auth failure, rate limit,
+        // model access, bad request, timeout, etc.). That made every AI
+        // failure indistinguishable in the UI, forcing a trip to server logs
+        // just to see what broke. error.message from the OpenAI SDK does not
+        // include the API key, so it's safe to surface directly.
+        const message = error instanceof DocumentAINotConfiguredError
+          ? error.message
+          : `OpenAI document understanding failed: ${error instanceof Error ? error.message : "Unknown error."}`;
         if (configured) console.error("AI document understanding failed", error);
         await prisma.documentProcessingResult.update({ where: { documentId: document.id }, data: { aiUnderstandingError: message, aiUnderstandingProcessedAt: new Date() } }).catch(() => undefined);
         await audit(organizationId, companyId, document.id, auditUserId, "AI_DOCUMENT_UNDERSTANDING_FAILED", { reason: message });
